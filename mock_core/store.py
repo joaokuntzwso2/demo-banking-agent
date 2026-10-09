@@ -32,6 +32,10 @@ class Obligation(Base):
 class Dispute(Base):
     __tablename__='disputes'
     id=Column(String,primary_key=True); customer_id=Column(String); transaction_id=Column(String); status=Column(String); created=Column(String)
+class ServiceCase(Base):
+    __tablename__='service_cases'
+    id=Column(String,primary_key=True);customer_id=Column(String);reason=Column(Text)
+    priority=Column(String);status=Column(String);assigned_to=Column(String);created=Column(String)
 class Payment(Base):
     __tablename__='payments'
     id=Column(String,primary_key=True); customer_id=Column(String); beneficiary_id=Column(String); amount=Column(Numeric(16,2)); status=Column(String); idempotency_key=Column(String,unique=True); created=Column(String)
@@ -87,6 +91,8 @@ def _add_seed_records(s: Session) -> None:
         ('TXN-CAFÉ','Café Paulista','32.80','card','posted')]:
         s.add(Transaction(id=t[0],customer_id='C001',merchant=t[1],amount=Decimal(t[2]),kind=t[3],timestamp=now(),status=t[4]))
     s.add(Beneficiary(id='BEN001',customer_id='C001',name='Condomínio Jardim do Sol',pix_key='condominio@example.invalid',verified=1))
+    # Explicitly UNVERIFIED recipient for risk / refusal scenarios. Never payable.
+    s.add(Beneficiary(id='BEN003',customer_id='C001',name='Urgent Settlement Services',pix_key='urgent@example.invalid',verified=0))
     for i,(name,amount) in enumerate([('Electricity',Decimal('340')),('Groceries',Decimal('950')),('Internet and mobile',Decimal('210')),('Insurance',Decimal('600'))]):
         s.add(Obligation(id=f'OB{i+1}',customer_id='C001',label=name,amount=amount,due=(datetime.now(timezone.utc).date()+timedelta(days=5+i*3)).isoformat()))
 
@@ -131,7 +137,7 @@ def reset() -> None:
     with Session(engine) as s:
         # Account must be removed before Customer (a real database foreign key).
         # Synthetic data is removed as one unit and not visible half-updated.
-        for model in (WorkflowSession, Ledger, Payment, Dispute, Approval, Event, Transaction,
+        for model in (WorkflowSession, Ledger, Payment, ServiceCase, Dispute, Approval, Event, Transaction,
                       Beneficiary, Obligation, Card, Account, Customer):
             s.execute(delete(model))
         s.flush()

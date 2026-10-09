@@ -20,8 +20,8 @@ Ensure the chosen OpenTelemetry SDK/instrumentation versions work with the targe
 ## Presenter evidence checklist
 
 1. Six agent instances shown in the actual Agent Manager console.
-2. Registered banking MCP Proxy and seven discovered tools.
-3. Scope-to-tool mapping includes all seven tools.
+2. Registered banking MCP Proxy and 15 discovered tools.
+3. Scope-to-tool mapping includes all 15 tools.
 4. One customer message; capture a real trace matching the operation time.
 5. Account specialist read succeeds; prohibited Account->execute Pix request is **denied by gateway** and visible in its logs/traces.
 6. Show payment reference in portal and matching Core event ID; capture the same business correlation ID at each traced hop where supported.

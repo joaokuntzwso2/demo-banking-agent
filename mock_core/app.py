@@ -32,6 +32,12 @@ class DisputeRequest(CustomerRequest):transaction_id:str;approval_id:str
 class PixRequest(CustomerRequest):beneficiary_id:str;amount:Decimal=Field(gt=0);approval_id:str;idempotency_key:str
 class ApprovalRequest(CustomerRequest):action:str;payload:dict
 class WorkflowRequest(CustomerRequest):state:dict
+class EscalationRequest(CustomerRequest):
+    reason:str=Field(min_length=8,max_length=500)
+    priority:str='normal'
+class CaseStatusRequest(CustomerRequest):
+    status:str
+    assigned_to:str='Aurora Human Support'
 
 @app.get('/health')
 def health():return {'status':'ok'}
@@ -44,7 +50,7 @@ def state(customer_id:str,x_internal_key:str|None=Header(None)):
         account=s.scalar(select(Account).where(Account.customer_id==customer_id))
         return {'customer':serialize(s.get(Customer,customer_id)),'account':serialize(account),'cards':rows(Card),'transactions':rows(Transaction),
                 'beneficiaries':rows(Beneficiary),'obligations':rows(Obligation),'disputes':rows(Dispute),
-                'payments':rows(Payment),'approvals':rows(Approval),'events':rows(Event)}
+                'payments':rows(Payment),'service_cases':rows(ServiceCase),'approvals':rows(Approval),'events':rows(Event)}
 
 @app.post('/workflows/{workflow_id}')
 def write_workflow(workflow_id:str,r:WorkflowRequest,x_internal_key:str|None=Header(None)):
@@ -146,6 +152,39 @@ def pix(r:PixRequest,x_internal_key:str|None=Header(None)):
         audit(s,r.customer_id,'pix_completed',{'payment_id':p.id,'approval_id':approval.id,
                                                 'amount':float(r.amount),'beneficiary_id':ben.id})
         s.commit();return serialize(p)
+@app.post('/service-cases')
+def service_case(r:EscalationRequest,x_internal_key:str|None=Header(None)):
+    """Create an auditable human handoff, not an automated financial decision."""
+    guard(x_internal_key,'BANK_CORE_WRITE_KEY')
+    if r.priority not in ('normal','high'):raise HTTPException(422,'Unsupported priority')
+    with Session(engine) as s:
+        owner(s,r.customer_id)
+        # Dedupe open cases for the same normalized reason.
+        same=s.scalar(select(ServiceCase).where(ServiceCase.customer_id==r.customer_id,
+            ServiceCase.reason==r.reason,ServiceCase.status.in_(['waiting_for_agent','assigned'])))
+        if same:return serialize(same)
+        item=ServiceCase(id=ident('CASE'),customer_id=r.customer_id,reason=r.reason,
+            priority=r.priority,status='waiting_for_agent',assigned_to='',created=now())
+        s.add(item);audit(s,r.customer_id,'human_escalation',{'case_id':item.id,'priority':r.priority})
+        s.commit();return serialize(item)
+
+@app.post('/service-cases/{case_id}/assign')
+def assign_case(case_id:str,r:CaseStatusRequest,x_internal_key:str|None=Header(None)):
+    # Simulation-only operator action. A distinct credential, never an agent capability.
+    guard(x_internal_key,'BANK_CASE_OPERATOR_KEY')
+    if r.status not in ('assigned','in_progress','resolved'):
+        raise HTTPException(422,'Invalid transition')
+    with Session(engine) as s:
+        item=s.get(ServiceCase,case_id,with_for_update=True)
+        if not item or item.customer_id!=r.customer_id:raise HTTPException(404,'Case not found')
+        allowed={'waiting_for_agent':{'assigned'},'assigned':{'in_progress'},'in_progress':{'resolved'},'resolved':set()}
+        if item.status != r.status and r.status not in allowed[item.status]:raise HTTPException(409,'Invalid state transition')
+        if item.status!=r.status:
+            item.status=r.status;item.assigned_to=r.assigned_to
+            audit(s,r.customer_id,'case_status_updated',{'case_id':case_id,'status':r.status})
+            s.commit()
+        return serialize(item)
+
 @app.post('/admin/reset')
 def admin_reset(x_internal_key:str|None=Header(None)):
     guard(x_internal_key,'BANK_RESET_KEY')

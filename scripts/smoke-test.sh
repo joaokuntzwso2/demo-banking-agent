@@ -40,7 +40,7 @@ docker compose exec -T account python -c '
 import asyncio
 from agents.common import mcp_tool
 async def main():
-    snapshot = await mcp_tool("get_banking_snapshot", {"customer_id": "C001"})
+    snapshot = await mcp_tool("get_account_balance", {"customer_id": "C001"})
     assert snapshot["account"]["balance"] >= 0
     print("Customer:", snapshot["customer"]["name"])
     print("Checking balance:", snapshot["account"]["balance"])

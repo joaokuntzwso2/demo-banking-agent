@@ -16,11 +16,11 @@ def test_separate_git_build_folders_are_self_contained():
         assert f'AGENT_ROLE"] = "{role}"' in main
 
 
-def test_mcp_upstream_is_standalone_and_all_seven_tools_are_retained():
+def test_mcp_upstream_is_standalone_with_15_named_tools():
     folder=ROOT/'deployment'/'agent-manager'/'upstream-mcp'
     assert (folder/'Dockerfile').exists()
     text=(folder/'mcp_server/app.py').read_text()
-    for name in ('get_banking_snapshot','request_card_block','execute_approved_card_block',
+    for name in ('get_account_balance','list_beneficiaries','get_human_cases','request_human_escalation','request_card_block','execute_approved_card_block',
                  'request_dispute','execute_approved_dispute','request_pix','execute_approved_pix'):
         assert f'async def {name}(' in text
 

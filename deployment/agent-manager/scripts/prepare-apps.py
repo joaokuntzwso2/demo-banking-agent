@@ -34,3 +34,38 @@ shutil.copy2(root/'requirements.txt',up/'requirements.txt')
 (up/'Dockerfile').write_text('''FROM python:3.12-slim\nWORKDIR /app\nCOPY requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PYTHONUNBUFFERED=1 PORT=8101\nEXPOSE 8101\nCMD ["python", "main.py"]\n''')
 (up/'README.md').write_text('''# Banking MCP upstream\n\nDeploy as a **normal Kubernetes/VM application**, not as one of the six Platform-Hosted agents. WSO2 Agent Manager registers its HTTPS `/mcp` endpoint as an MCP Proxy and exposes a governed environment-specific URL.\n\nDocker build from this folder: `docker build -t aurora-banking-mcp:1.0 .`\nConfigure `BANK_CORE_URL`, `BANK_CORE_READ_KEY`, `BANK_CORE_WRITE_KEY`, `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS`. Restrict ingress so only the WSO2 gateway can reach the upstream service. No gateway tokens belong in this upstream process. Read root README for full instructions.\n''')
 print('MCP upstream:',up)
+
+# Optional seventh externally hosted risk advisor, built and run outside AMP.
+# It is registered in Agent Manager as an External Agent by the presenter.
+ext=root/'deployment'/'agent-manager'/'external-risk'
+ext.mkdir(parents=True,exist_ok=True)
+for name in ('agents','banking_common','knowledge'):
+    target=ext/name
+    if target.exists():shutil.rmtree(target)
+    shutil.copytree(root/name,target,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+shutil.copy2(root/'requirements.txt',ext/'requirements.txt')
+(ext/'main.py').write_text("""import os,uvicorn
+os.environ['AGENT_ROLE']='risk'
+from agents.risk import app
+if __name__=='__main__':
+    uvicorn.run(app,host='0.0.0.0',port=int(os.getenv('PORT','8000')))
+""")
+(ext/'Dockerfile').write_text("""FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+ENV PORT=8000
+EXPOSE 8000
+CMD ["python","main.py"]
+""")
+(ext/'README.md').write_text("""# Optional external risk agent
+
+Run as a normal container/VM service, then register its HTTPS `/chat` endpoint in
+WSO2 Agent Manager as **Externally-Hosted**. Requires governed MCP Proxy
+`MCP_SERVER_URL` + `MCP_AUTH_MODE=apikey` and `MCP_PROXY_API_KEY`, or external
+AgentID client credentials. Grant **only `list_beneficiaries`** tool scope.
+Configure `AGENT_RISK_URL` and `AGENT_RISK_API_KEY` in Concierge. All decisions
+are advisory; Pix and the Banking Core enforce recipient verification.
+""")
+print('Optional external risk agent:',ext)

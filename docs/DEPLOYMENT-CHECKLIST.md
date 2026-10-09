@@ -15,7 +15,7 @@ Start with [README — Manually deploy on WSO2 Agent Manager](../README.md#6--ma
 ## Agent Manager MCP governance — manually configured
 
 - [ ] An MCP Proxy targets the upstream MCP, not an agent deployment.
-- [ ] All seven tools are discovered and individually mapped to scopes. **Check uncovered tools**: the documented default may allow them to authenticated callers.
+- [ ] All 15 tools are discovered and individually mapped to scopes. **Check uncovered tools**: the documented default may allow them to authenticated callers.
 - [ ] The five specialists receive their governed `MCP_SERVER_URL`; `MCP_AUTH_MODE=agentid` is configured and AgentID credentials are provisioned by the platform.
 - [ ] Role-scoped permissions allow reads to Account/Wellness, appropriate card tools to Card, dispute tools to Dispute, Pix tools to Pix; Concierge has no direct banking MCP tools.
 - [ ] A deliberate Account→execute-Pix test is **denied at the MCP Proxy**, not just by Python code.

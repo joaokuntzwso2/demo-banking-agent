@@ -4,7 +4,7 @@ Graph: understand -> plan -> parallel independent specialists -> compose.
 Approvals are persisted with the workflow and executed ONLY by their specialist;
 commit acknowledgement is recovered via a same-approval idempotent retry.
 """
-import os,asyncio,json,httpx,uuid
+import os,asyncio,json,httpx,uuid,re
 from typing import TypedDict
 from fastapi import Header,HTTPException
 from pydantic import BaseModel,Field
@@ -12,17 +12,20 @@ from langgraph.graph import StateGraph,START,END
 from banking_common.config import CORE_URL
 from banking_common.security import require_secret,secret
 from banking_common.telemetry import outbound_headers
-from .intents import action_intent
+from .intents import action_intent,wants_human
 from .confirmation import confirmed,response as confirmation_response
 from .common import *
 
 ROLE_URLS={role:os.getenv('AGENT_'+role.upper()+'_URL',f'http://localhost:{port}')
            for role,port in [('account',8201),('card',8202),('dispute',8203),('pix',8204),('wellness',8205)]}
-KEYWORDS={'account':['account','balance','cuenta','saldo','transaction','transacci'],
+if os.getenv('AGENT_RISK_URL'):
+    ROLE_URLS['risk']=os.getenv('AGENT_RISK_URL')
+KEYWORDS={'risk':['urgent settlement','urgent pix','unverified','new pix key','no verificado','urgente'],
+          'account':['account','balance','cuenta','saldo','transaction','transacci'],
           'card':['card','tarjeta','fraud','fraude','block','bloque','unrecognized','desconoc'],
           'dispute':['dispute','reclamo','reclamaci','charge','cargo','fraud','fraude','recognize','reconozco'],
           'pix':['pix','transfer','pagar','pay ','payment','pago'],
-          'wellness':['budget','expenses','gastos','future','enough','suficiente','money','dinero','obligacion','remaining']}
+          'wellness':['budget','expenses','gastos','future','enough','suficiente','money','dinero','obligacion','remaining','what if','what happens','si pago','si pagara']}
 
 def gateway_headers(role):
     key=os.getenv('AGENT_'+role.upper()+'_API_KEY','')
@@ -34,18 +37,45 @@ def heuristic(message):
     t=message.casefold();hits=[k for k,v in KEYWORDS.items() if any(w in t for w in v)]
     return hits or ['account']
 
+def deterministic_requirements(message):
+    """LLM is advisory for routing; explicit business intents cannot be dropped."""
+    t=message.casefold()
+    needed=set()
+    if wants_human(message):needed.add('dispute')
+    if 'risk' in ROLE_URLS and any(x in t for x in ('urgent settlement','new pix key','unverified','urgente')):
+        needed.add('risk')
+    for action,role in (('block_card','card'),('open_dispute','dispute'),('execute_pix','pix')):
+        if action_intent(message,action).action:needed.add(role)
+    if any(x in t for x in ('what if','what happens if','si pago','si pagara','si pagase','qué pasaría si')):
+        needed.add('wellness')
+        needed.discard('pix')  # no payment preparations for hypothetical spending
+    return needed
+
+def is_privacy_attack(message):
+    t=message.casefold()
+    external=('other customer','another customer','someone else',"other person",'otro cliente','otra persona',
+              'todas las cuentas','all customers','other accounts')
+    return any(x in t for x in external) and any(x in t for x in
+             ('show','reveal','give me','access','display','dame','muestra','mostrar','enséñame','ver'))
+
 async def plan(message):
-    guidance=('Return ONLY a JSON list of banking specialist roles: account,card,dispute,pix,wellness. '
-              'Select specialists relevant to the question, even if informational. '
-              'You may suggest roles but you do NOT authorize financial operations.')
+    must=deterministic_requirements(message)
+    guidance=('Return ONLY a JSON list of banking specialist roles: account,card,dispute,pix,wellness,risk (if available). '
+              'Choose relevant independent specialists; never authorize financial operations. '
+              'A request to speak to a person requires dispute. Hypothetical transfers require wellness, not Pix.')
+    suggested=[]
     try:
         raw=await llm(guidance,message)
         parsed=json.loads(raw) if raw else None
-        if isinstance(parsed,list):
-            roles=[r for r in parsed if r in ROLE_URLS]
-            if roles:return list(dict.fromkeys(roles))
-    except Exception:pass
-    return heuristic(message)
+        if isinstance(parsed,list):suggested=[r for r in parsed if r in ROLE_URLS]
+    except Exception as exc:
+        # A centrally governed model returning an error (including a guardrail
+        # denial) MUST NOT silently downgrade into uncontrolled heuristic
+        # execution of banking intents. Fail closed and surface the incident.
+        if os.getenv('USE_LLM_PROVIDER','false').lower()=='true':
+            raise HTTPException(503,'Governed model unavailable or rejected the request; no banking actions initiated') from exc
+    choices=suggested or heuristic(message)
+    return list(dict.fromkeys([*choices,*sorted(must)]))
 
 class GraphState(TypedDict,total=False):
     request:dict
@@ -60,6 +90,8 @@ async def interpret_node(state:GraphState):
 async def plan_node(state:GraphState):
     roles=await plan(state['request']['message'])
     msg=state['request']['message'].casefold()
+    if any(t in msg for t in ('what if','what happens if','si pago','si pagara','si pagase','qué pasaría si')):
+        roles=['wellness']
     # After a requested Pix payment we must read back fresh account/wellness
     # state following the approved commit rather than present stale estimates.
     if 'pix' in roles and any(w in msg for w in ('then','después','luego','after','remaining','restante')):
@@ -105,6 +137,13 @@ async def concierge(r:ChatRequest):
     except httpx.HTTPStatusError as e:
         if e.response.status_code!=404:raise
     original=r.message
+    if is_privacy_attack(original):
+        lang=choose_language(original,r.language)
+        return AgentResponse(agent='concierge',message=(
+            'No puedo mostrar información de otros clientes ni omitir los controles de seguridad.' if lang=='es' else
+            "I cannot access another customer's records or bypass banking authorization."),
+            data={'language':lang,'invoked_agents':[],'workflow_id':workflow_id,
+                  'steps':[{'stage':'privacy_policy','status':'denied'}]},next_actions=[])
     clarification=old.get('clarification')
     # A clarification response resumes the previously authorized *intent*,
     # but it never approves an operation or bypasses specialist validation.
@@ -155,6 +194,7 @@ async def post_action(action,outcome,customer_id,language):
 @app.post('/approve')
 async def approve(req:ApprovalDecision,x_internal_key:str|None=Header(None)):
     require_secret(x_internal_key,'CONCIERGE_APPROVAL_KEY')
+    if req.customer_id != 'C001':raise HTTPException(403,'Demo customer binding mismatch')
     # A signed-in customer may only approve an action prepared in THEIR
     # persisted workflow. An arbitrary guessed approval ID isn't sufficient.
     try:

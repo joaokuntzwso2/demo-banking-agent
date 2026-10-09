@@ -121,6 +121,19 @@ async def decide(approval_id:str,req:Decision,sid:str=Depends(session)):
     return await agent('POST','/approve',{'approval_id':approval_id,'approved':req.approved,
        'customer_id':'C001','workflow_id':workflow_id(sid),'language':req.language,
        'original_request':req.original_request},approval=True)
+class OperatorDecision(BaseModel):
+    status:str
+    operator_code:str
+@app.post('/api/operator/cases/{case_id}/transition')
+async def operator_transition(case_id:str,req:OperatorDecision,sid:str=Depends(session)):
+    expected=os.getenv('DEMO_OPERATOR_CODE','')
+    if not expected:raise HTTPException(403,'Presenter operator console is disabled')
+    if not hmac.compare_digest(req.operator_code,expected):raise HTTPException(403,'Incorrect operator code')
+    if req.status not in ('assigned','in_progress','resolved'):raise HTTPException(422,'Invalid status')
+    # Restricted separately from the customer-facing Concierge.
+    return await core('POST',f'/service-cases/{case_id}/assign',
+        {'customer_id':'C001','status':req.status},capability='BANK_CASE_OPERATOR_KEY')
+
 @app.get('/api/workflow')
 async def pending(sid:str=Depends(session)):
     return await agent('GET','/workflow/'+workflow_id(sid)+'?customer_id=C001',approval=True)

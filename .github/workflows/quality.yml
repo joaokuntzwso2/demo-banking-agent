@@ -23,7 +23,7 @@ jobs:
       - name: Ensure Agent Manager generated folders match canonical code
         run: |
           python deployment/agent-manager/scripts/prepare-apps.py
-          git diff --exit-code -- deployment/agent-manager/apps deployment/agent-manager/upstream-mcp
+          git diff --exit-code -- deployment/agent-manager/apps deployment/agent-manager/upstream-mcp deployment/agent-manager/external-risk
   synthetic-integration:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -36,5 +36,7 @@ jobs:
       - run: docker compose up -d --build
       - run: bash scripts/smoke-test.sh
       - run: python scripts/integration-test.py
+      - run: python scripts/run-executive-scenarios.py --report executive-scenario-report.json
+      - run: python scripts/evaluate-scenarios.py executive-scenario-report.json
       - if: always()
         run: docker compose down

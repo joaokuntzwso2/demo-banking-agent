@@ -22,11 +22,13 @@ def choose_language(message,provided='en'):
 
 # Defense in depth: Agent Manager MCP OAuth tool permissions must ALSO be configured.
 TOOLS_BY_ROLE = {
-    'account': {'get_banking_snapshot'},
-    'card': {'get_banking_snapshot', 'request_card_block', 'execute_approved_card_block'},
-    'dispute': {'get_banking_snapshot', 'request_dispute', 'execute_approved_dispute'},
-    'pix': {'get_banking_snapshot', 'request_pix', 'execute_approved_pix'},
-    'wellness': {'get_banking_snapshot'},
+    'account': {'get_account_balance','list_account_transactions','get_dispute_status','list_beneficiaries'},
+    'card': {'get_card_status','request_card_block','execute_approved_card_block'},
+    'dispute': {'list_card_transactions','get_dispute_status','get_human_cases',
+                'request_dispute','execute_approved_dispute','request_human_escalation'},
+    'pix': {'get_account_balance','list_beneficiaries','request_pix','execute_approved_pix'},
+    'wellness': {'get_account_balance','get_upcoming_obligations'},
+    'risk': {'list_beneficiaries'},
     'concierge': set(),
 }
 _token_cache = {}
@@ -96,14 +98,33 @@ async def mcp_tool(name,arguments):
                 return {}
 
 async def llm(system,user):
-    key=os.getenv('OPENAI_API_KEY','')
-    if not key:return None
+    """Managed-mode LLM calls MUST route through the attached WSO2 provider.
+
+    LLM_PROVIDER_URL and LLM_PROVIDER_KEY are injected by the Agent Manager
+    LLM configuration. The OpenAI-compatible API key is a gateway-issued key,
+    not an underlying provider secret. No direct-provider fallback is allowed
+    in managed mode when USE_LLM_PROVIDER=true.
+    """
+    managed=os.getenv('USE_LLM_PROVIDER','false').lower()=='true'
+    if managed:
+        url=os.getenv('LLM_PROVIDER_URL','').strip()
+        key=os.getenv('LLM_PROVIDER_KEY','').strip()
+        if not url or not key:
+            raise RuntimeError('Managed LLM binding missing: LLM_PROVIDER_URL/LLM_PROVIDER_KEY')
+    else:
+        if os.getenv('WSO2_MODE','false').lower()=='true' and os.getenv('REQUIRE_GOVERNED_LLM','true').lower()=='true':
+            raise RuntimeError('Managed agents require USE_LLM_PROVIDER=true or explicit REQUIRE_GOVERNED_LLM=false')
+        key=os.getenv('OPENAI_API_KEY','').strip()
+        url=os.getenv('OPENAI_URL','').strip()
+        if not key:return None
     from openai import AsyncOpenAI
-    kwargs={'api_key':key}
-    if os.getenv('OPENAI_URL'):kwargs['base_url']=os.getenv('OPENAI_URL')
-    c=AsyncOpenAI(**kwargs)
-    response=await c.chat.completions.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),temperature=0,messages=[{'role':'system','content':system},{'role':'user','content':user}])
-    return response.choices[0].message.content
+    options={'api_key':key}
+    if url:options['base_url']=url
+    client=AsyncOpenAI(**options)
+    result=await client.chat.completions.create(
+        model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),temperature=0,
+        messages=[{'role':'system','content':system},{'role':'user','content':user}])
+    return result.choices[0].message.content
 
 def retrieve(topic,lang,query=''):
     """Local document retrieval: filter corpus by topic/language, then rank by lexical term overlap.
@@ -120,9 +141,11 @@ def application(name,fn):
     app=FastAPI(title='Aurora '+name+' Agent')
     install_telemetry(app,name)
     @app.get('/health')
-    async def health():return {'status':'ok','agent':name}
+    async def health():return {'status':'ok','agent':name,'agent_version':os.getenv('AGENT_VERSION','dev-local')}
     @app.post('/chat',response_model=AgentResponse)
     async def chat(req:ChatRequest,x_agent_call_key:str|None=Header(None)):
         require_secret(x_agent_call_key,'CONCIERGE_CALL_KEY' if name=='concierge' else 'SPECIALIST_CALL_KEY')
+        if req.customer_id != 'C001':
+            raise HTTPException(403,'This demo agent is bound to fictional customer C001')
         return await fn(req)
     return app

@@ -1,11 +1,24 @@
 # Banco Aurora — A Governed Banking Multi-Agent Experience
 
 > **Synthetic banking demonstration; not a live bank or production security reference.**
-> **Source baseline:** This release builds on the latest `demo-banking-agent-git-ready` snapshot provided during this conversation. Before pushing to [joaokuntzwso2/demo-banking-agent](https://github.com/joaokuntzwso2/demo-banking-agent), compare your current `main` branch and merge any independent changes. The GitHub `HEAD` was not fetched successfully during this work.
+> **Source baseline:** Executive v3 is based on the previously delivered VP-hardening source snapshot (corresponding to the work subsequently pushed to `main` as `b2f746c`). GitHub network fetch was unavailable in this execution environment; reconcile independent remote changes before replacing your checkout. This package is an upgrade artifact, not an assertion that remote GitHub has already been updated.
 >
 > **Deployment:** WSO2 Agent Manager / on-prem deployment is **manual**. This repository provides six independent Custom API Agent Git build paths and exact environment templates; no automatic Agent Manager provisioning is performed or claimed.
 
-For the complete remediation list, test coverage, and the distinction between implemented code and manual governance configuration, see [Critical Fixes Delivered](docs/VP-CRITICAL-FIXES.md).
+**Executive v3 deliverables:** eight scenario cards, optional externally hosted Risk Advisor, case management, risk refusals, hypothetical cash-flow, granular MCP tool scopes, managed LLM-provider configuration, config preflight and a six-scenario write-capable acceptance runner. **Native Agent Manager** guardrails, AgentID scope policies, trace monitors, Agent Kinds and promotion/rollback remain manual console tasks; see [Platform Scenarios](docs/PLATFORM-SCENARIOS.md).
+
+**Start here:** [Executive Playbook](docs/EXECUTIVE-PLAYBOOK.md) · [Manual AMP deployment](docs/DEPLOY-MANUAL-AMP.md) · [Platform capabilities](docs/PLATFORM-SCENARIOS.md) · [Banking data contract](docs/BANKING-DATA-CONTRACT.md).
+
+```bash
+# Existing .env users keep their local credentials; update from .env.example as needed.
+bash scripts/run-local.sh
+# Execute S01–S06 and reset synthetic data before and after:
+bash scripts/verify-executive.sh --full  # runs from Docker, no host httpx installation
+# or run the individual scripts if you already have their Python dependencies:
+python scripts/run-executive-scenarios.py --report executive-scenario-report.json
+python scripts/evaluate-scenarios.py executive-scenario-report.json
+```
+**These last scripts alter/reset demo data; never run them against a real banking backend.**
 
 ## 1 — The story: one customer, one conversation, six agents
 
@@ -46,7 +59,8 @@ flowchart TD
   Concierge --> D[Dispute Resolution]
   Concierge --> P[Pix Payments]
   Concierge --> W[Financial Wellness]
-  A & C & D & P & W -->|OAuth AgentID in managed mode| Proxy[WSO2 MCP Proxy]
+  Concierge -.->|Optional managed external endpoint| R[Read-only Risk Advisor]
+  A & C & D & P & W & R -->|Governed MCP read/write scopes| Proxy[WSO2 MCP Proxy]
   Proxy --> Upstream[Upstream Banking MCP Server]
   Upstream --> Core[Banking Core]
   BFF -->|Read-only account view| Core
@@ -59,16 +73,17 @@ flowchart TD
 
 ### Responsibilities of each agent
 
-| Agent | Input and decision | APIs/tools it may use | Output |
-|---|---|---|---|
-| **Aurora Concierge** | Normalizes language, selects specialists, plans graph execution, merges responses, stores workflow, verifies approvals and read-back | Authenticated `/chat` and `/execute` on specialists; `/workflows`, `/approvals` and read-only `/state` on Core. **No MCP tool permission.** | Natural-language conversation, pending action IDs, execution-step metadata |
-| **Account Intelligence** | Reads the selected customer's ledger-visible account view and card/pix records | `get_banking_snapshot` | Verified balance, transactions, beneficiaries, receipts |
-| **Card Security** | Resolves a unique card; never blocks merely from a fraud-related keyword | `get_banking_snapshot`, `request_card_block`, `execute_approved_card_block` | Card status or a specific approval request |
-| **Dispute Resolution** | Resolves a unique posted card transaction by ID, merchant or exact unambiguous amount; explains fictional case policy | `get_banking_snapshot`, `request_dispute`, `execute_approved_dispute`, dispute policy retrieval | Grounded policy response with citation; case approval; review status |
-| **Pix Payments** | Requires an explicit non-negated pay instruction, an unambiguous BRL amount and a verified named beneficiary | `get_banking_snapshot`, `request_pix`, `execute_approved_pix` | Exact payment approval; committed Pix result only after authorization |
-| **Financial Wellness** | Computes known future obligations against a live checking balance | `get_banking_snapshot`, financial policy retrieval | Grounded cash-flow projection (not regulated advice) |
+| Agent | Business responsibility | Actual MCP tools or communication |
+|---|---|---|
+| **Aurora Concierge** (customer-facing) | Language, intent, specialist selection, orchestration, persisted approval workflow, authorized execution and post-commit verification | Authenticated `/chat`, `/execute` on specialists and `/workflows`/`/approvals` with Core; **no Banking MCP permission** |
+| **Account Intelligence** | Explain checking balance, transactions and paid Pix receipts | `get_account_balance`, `list_account_transactions`, `get_dispute_status`, `list_beneficiaries` |
+| **Card Security** | Identify a single card, show status, prepare approval and block only with authorization | `get_card_status`, `request_card_block`, `execute_approved_card_block` |
+| **Dispute Resolution** | Explain cited fictional policies, create disputed-card case; explicit human escalation | `list_card_transactions`, `get_dispute_status`, `get_human_cases`, `request_dispute`, `execute_approved_dispute`, `request_human_escalation`, policy retrieval |
+| **Pix Payments** | Check amount, balance, recipient verification and explicit consent; persist single-debit simulated Pix | `get_account_balance`, `list_beneficiaries`, `request_pix`, `execute_approved_pix` |
+| **Financial Wellness** | Verified financial projection, without generating a payment approval for what-if prompts | `get_account_balance`, `get_upcoming_obligations`, policy retrieval |
+| **Risk Advisor (optional external)** | Read-only advice about known verified/unverified recipient; cannot authorize payment | `list_beneficiaries`; registered as External Agent separately |
 
-The agent's read-only and write tool allowlists in `agents/common.py` are **defense in depth**, *not* a substitute for Agent Manager OAuth scopes. The banking Core independently checks ownership, amount, approval, balance, beneficiary status and idempotency.
+The independent agent MCP allowlists in `agents/common.py` are defense in depth. WSO2 OAuth gateway scopes and Core bank authorization must be enforced separately. The optional external risk agent does not replace the deterministic Pix/Banking Core recipient-verification gate.
 
 ### How orchestration works
 
@@ -80,23 +95,17 @@ A `WorkflowSession` record in Core keeps `pending` approval IDs, completed outco
 
 **Limits:** This is a guarded demo orchestrator, not an autonomous general-purpose banking workflow engine; it does not implement full distributed workflow checkpointing at every network hop, bank-grade OIDC customer delegation, production transaction reconciliation, or a compensation/saga engine.
 
-## 3 — The seven MCP tools
+## 3 — Banking MCP interface: 15 governed tools
 
-| Tool | Effect | Recommended OAuth scope |
-|---|---|---|
-| `get_banking_snapshot` | Customer record/account/transactions/cards/obligations/approvals read | `aurora-banking:read` |
-| `request_card_block` | Create pending block approval | `aurora-banking:card-request` |
-| `execute_approved_card_block` | Validate approval then block | `aurora-banking:card-execute` |
-| `request_dispute` | Create dispute approval | `aurora-banking:dispute-request` |
-| `execute_approved_dispute` | Validate approval then open case | `aurora-banking:dispute-execute` |
-| `request_pix` | Create Pix approval | `aurora-banking:pix-request` |
-| `execute_approved_pix` | Validate approval then atomically debit & receipt | `aurora-banking:pix-execute` |
+Eight purpose-specific read tools: `get_account_balance`, `list_account_transactions`, `get_card_status`, `list_card_transactions`, `get_dispute_status`, `list_beneficiaries`, `get_upcoming_obligations`, `get_human_cases`.
 
-**CRITICAL:** Cover **every tool** with an actual OAuth scope. In Agent Manager 1.0.0, an MCP tool with no covering scope can be default-permit to authenticated callers. See [WSO2: Authorize Agent Access to MCP Tools](https://wso2.com/agent-platform/docs/v1.0.0/guides/authorize-agent-access-to-mcp-tools/). Read/write access through an API key alone is *not* per-tool authorization. The exact scope/role matrix, allowed calls and negative test are in [docs/GOVERNANCE-MATRIX.md](docs/GOVERNANCE-MATRIX.md).
+Seven change-related tools: `request_human_escalation`, `request_card_block`, `execute_approved_card_block`, `request_dispute`, `execute_approved_dispute`, `request_pix`, `execute_approved_pix`. Case escalation opens a nonfinancial human-service task only upon an explicit customer request. Banking-money/card/dispute writes continue to require their immutable human approval payloads.
+
+The old broadly exposed `get_banking_snapshot` MCP tool was removed. Banking Core still provides a private state endpoint to the authenticated portal. **Every one of the 15 MCP tools needs an explicit OAuth scope** in Agent Manager because uncovered tools may default-permit authenticated callers. Full scope-to-tool/identity mapping and a negative Account→Pix gateway test are in [Governance Matrix](docs/GOVERNANCE-MATRIX.md).
 
 ## 4 — The policy retrieval implementation
 
-This release includes **40 versioned, fictional policy records** (20 each language), including disputes, evidence, duplicate claims, card security, checking vs credit-card cash impact, Pix limits, beneficiary verification and financial wellness. `scripts/ingest-policies.py` produces a **persistent SQLite FTS5 lexical index**, preserving document ID/version/effective date. Agents filter by role topic/language, retrieve up to three ranked policies, and generate conservative customer answers using independently verified financial facts. Responses expose citation metadata and the actual retrieval method.
+This release includes **60 versioned, fictional policy records** (30 each language), including disputes, evidence, duplicate claims, account/cash-flow constraints, Pix beneficiary verification, customer privacy, human escalation and agent governance. `scripts/ingest-policies.py` produces a **persistent SQLite FTS5 lexical index**, preserving document ID/version/effective date. Agents filter by role topic/language, retrieve up to three ranked policies, and generate conservative customer answers using independently verified financial facts. Responses expose citation metadata and the actual retrieval method.
 
 ```bash
 python scripts/ingest-policies.py
@@ -142,9 +151,10 @@ Reset from the UI using the presenter code or run `bash scripts/seed.sh` (see no
 ```bash
 pytest -q
 python deployment/agent-manager/scripts/prepare-apps.py
-bash scripts/smoke-test.sh
+bash scripts/verify-executive.sh          # read-only smoke + isolated tests
 # WARNING: performs synthetic writes and resets the demo before and after:
-python scripts/integration-test.py
+bash scripts/verify-executive.sh --full  # S01–S06 BFF flows and local scorecard
+python scripts/integration-test.py      # original authenticated BFF contract suite
 ```
 
 Unit tests cover ledger/idempotency/approval replay, FK and startup, intent negation/ambiguity, policy retrieval, portal auth and deployment folder contracts. CI source/unit jobs run on each pull request; an optional GitHub Actions `workflow_dispatch` job runs the Compose write-capable integration suite. The test requires the local-only presenter keys or `DEMO_ACCESS_CODE`/`DEMO_RESET_CODE` values set in its environment.
@@ -157,7 +167,7 @@ Unit tests cover ledger/idempotency/approval replay, FK and startup, intent nega
 
 1. Run `python deployment/agent-manager/scripts/prepare-apps.py`, commit the **generated six application folders** to GitHub, and keep credentials in Agent Manager's environment/secrets configuration (not Git).
 2. Manually deploy Core and upstream Banking MCP as private supporting services. Set `BANK_CORE_READ_KEY` and `BANK_CORE_WRITE_KEY` on MCP; Core also needs `BANK_APPROVAL_KEY`, `BANK_RESET_KEY`, `DATABASE_URL`. See `deployment/agent-manager/k8s/supporting-services.yaml` as a **reference manifest**, not auto-installation.
-3. In Agent Manager register an MCP Proxy pointing at your reachable upstream `https://.../mcp`, enable **OAuth**, discover seven tools, assign all seven tools a scope and roles per [docs/GOVERNANCE-MATRIX.md](docs/GOVERNANCE-MATRIX.md). Uncovered tools are potentially default-permit: check every tool.
+3. In Agent Manager register an MCP Proxy pointing at your reachable upstream `https://.../mcp`, enable **OAuth**, discover 15 tools, assign every tool a scope and roles per [docs/GOVERNANCE-MATRIX.md](docs/GOVERNANCE-MATRIX.md). Uncovered tools are potentially default-permit: check every tool.
 4. Manually create **five platform-hosted Custom API Agent** deployments using the Git subdirectories:
    - `deployment/agent-manager/apps/aurora-account`
    - `deployment/agent-manager/apps/aurora-card`
@@ -167,7 +177,7 @@ Unit tests cover ledger/idempotency/approval replay, FK and startup, intent nega
 5. For each, use Python 3.12, `python main.py`, port **8000**, and exposed OpenAPI at `/openapi.json`; securely attach the MCP Proxy with injected variable **`MCP_SERVER_URL`** and `MCP_AUTH_MODE=agentid`. The six app paths each include copied canonical code. Configure `SPECIALIST_CALL_KEY` and write specialists' `SPECIALIST_EXECUTION_KEY`. The platform must provision `AMP_AGENTID_*` variables for AgentID OAuth.
 6. Deploy **Aurora Concierge** from `deployment/agent-manager/apps/aurora-concierge` with the same build contract, **without banking MCP tool access**. Set the five actual managed **Invoke base URLs** and their API keys (`AGENT_ACCOUNT_URL`, `AGENT_ACCOUNT_API_KEY`, etc.), plus `CONCIERGE_CALL_KEY`, `CONCIERGE_APPROVAL_KEY`, `SPECIALIST_CALL_KEY`, `SPECIALIST_EXECUTION_KEY`, `BANK_APPROVAL_KEY`, `BANK_CORE_READ_KEY`, `BANK_CORE_URL`.
 7. Run the portal/BFF separately, or keep it on your laptop with the hybrid Compose profile. Set **only** `CONCIERGE_URL` + `CONCIERGE_API_KEY` for AI traffic, and `BANK_CORE_URL` for read-model dashboard data. The browser must **not** be configured with specialist URLs or private gateway keys. Use `deployment/agent-manager/.env.portal.example` as the canonical portal template.
-8. Set separate session/access/reset secrets, HTTPS, `DEMO_SECURE_COOKIE=true`, network allowlists and the real cross-service addresses. Test `GET /health`, `/chat`, `/approve`, MCP seven-tool discovery, and gateway denial with a read-only agent.
+8. Set separate session/access/reset secrets, HTTPS, `DEMO_SECURE_COOKIE=true`, network allowlists and the real cross-service addresses. Test `GET /health`, `/chat`, `/approve`, MCP 15-tool discovery, and gateway denial with a read-only agent.
 
 **Service-to-service headers:** Portal → Concierge `/chat` uses `X-Agent-Call-Key: CONCIERGE_CALL_KEY`. Portal → Concierge `/approve` also uses `X-Internal-Key: CONCIERGE_APPROVAL_KEY`. Concierge → Specialist `/chat` uses `SPECIALIST_CALL_KEY` in `X-Agent-Call-Key`; `/execute` additionally uses `X-Internal-Key: SPECIALIST_EXECUTION_KEY`. Agent Manager's own Invoke API key remains an independent gateway credential (`X-API-Key`). Core accepts separate read, approval, mutation and reset keys. All are non-browser secrets. Refer to the `.env.*.example` templates under `deployment/agent-manager/`.
 
@@ -220,14 +230,15 @@ Presenter sample prompts:
 agents/                    Canonical Concierge, specialists, conservative intent parser, retrieval, receipts
 banking_common/            Service capabilities, runtime configuration, correlation and tracing utilities
 mock_core/                 PostgreSQL/SQLite banking domain model and APIs
-mcp_server/                Seven-tool FastMCP upstream
-knowledge/policies.json    40 synthetic versioned policy records
-scripts/                   Smoke test, integration test, seed/reset, policy index and diagnostics
+mcp_server/                15-tool least-privilege FastMCP upstream
+knowledge/policies.json    60 fictional versioned policy records
+scripts/                   Smoke, six-scenario E2E, evaluation scorecard, config check, bootstrap and diagnostics
 demo_portal/               FastAPI same-origin banking BFF, HTML/CSS/JS
  deployment/agent-manager/apps/  Six regenerated self-contained Git build paths
  deployment/agent-manager/upstream-mcp/   Standalone upstream MCP build
+ deployment/agent-manager/external-risk/   Optional externally hosted Risk Advisor
  deployment/agent-manager/k8s/   Manual reference manifests only
- docs/                     Presenter runbook, security, observability, Git workflow, conversation guide
+ docs/                     Eight-scenario playbook, Agent Manager operator tasks, security, observability, Git workflow
  tests/                    Banking, security, negative-intent and MCP compatibility tests
  .github/workflows/        Source/unit CI, optional write-capable integration workflow
 ```
@@ -237,3 +248,31 @@ demo_portal/               FastAPI same-origin banking BFF, HTML/CSS/JS
 `.gitignore` excludes `.env`, cookies, runtime SQLite indices, API keys, databases and caches. `.dockerignore` prevents `.env` being copied into build contexts. Run `bash scripts/git-preflight.sh` after staging a commit, inspect `git diff --cached` and **never** publish real private credentials in examples. Agent Manager application folders are intentionally generated and **must be committed**, since the on-prem Agent Manager builds each folder independently from Git.
 
 **Licensing and disclaimers:** All company/customer/person/merchant records here are synthetic. Any branding does not represent a real bank or customer endorsement. No external banking provider is connected. Do not present this demo as a production-ready regulated finance product.
+
+## 10 — Eight scenarios and native platform coverage
+
+The **Executive Scenario Studio** in the UI contains S01–S08. S01–S06 are customer-facing and run against persisted synthetic records. S07–S08 are clearly marked operator-only activities; use the real Agent Manager Console.
+
+| ID | Experience | Runtime acceptance | Agent Manager evidence (manual) |
+|---|---|---|---|
+| S01 | Fraud, block and dispute | Two approvals, no checking debit | Two agent traces, MCP OAuth permissions |
+| S02 | Pix and reconciliation | Single debit, fresh balance, safe retry | Tool sequence / governed execution |
+| S03 | Risky recipient | Unverified recipient rejected | Optional external Risk Advisor + MCP scopes |
+| S04 | What-if cash flow | No approval/write, grounded projection | RAG citation/managed LLM/evaluation |
+| S05 | Human escalation | Case created and human status advanced | Service-case tool audit + trace |
+| S06 | Prompt injection/privacy | Refuse cross-customer data | Managed guardrail and Core authorization |
+| S07 | Quality drift | Local result scorecard; native result manual | Past/Future Traces monitors + evaluators |
+| S08 | Managed release | Version in `/health`; native release manual | Build, promote, rollback, Agent Kind |
+
+**Local automated acceptance (S01–S06):** `python scripts/run-executive-scenarios.py --report executive-scenario-report.json`. Uses the authenticated BFF, performs only synthetic writes, requires presenter operator and reset privileges, restores seed state afterward. Local fallback access/reset codes are allowed *only* for `localhost` test URLs; shared deployments require explicit private environment variables.
+
+**Managed endpoint preflight (read-only):**
+
+```bash
+python scripts/check-managed-config.py --mode portal --env-file deployment/agent-manager/.env.portal.local
+python scripts/check-managed-config.py --mode concierge --env-file deployment/agent-manager/.env.concierge.local
+```
+
+Use [manual deployment details](docs/DEPLOY-MANUAL-AMP.md) to configure actual endpoint URLs and credentials. `deployment/agent-manager/compose.portal.yaml` starts only supporting services and the portal (not the hosted agents). There is **no automated on-prem Agent Manager deployment** in this package.
+
+**Platform showcase:** attach a managed LLM provider, configure gateway-level guardrails and quotas, assign scopes across all MCP tools, enable real tracing and evaluation monitors, demonstrate a vetted Agent Kind, and manually test environment lifecycle / rollback. Follow [Platform Scenarios](docs/PLATFORM-SCENARIOS.md) for each verifiable control and do not conflate local scorecards with native WSO2 evaluation results.

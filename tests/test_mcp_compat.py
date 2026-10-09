@@ -46,11 +46,11 @@ def test_mcp_tool_uses_preconfigured_httpx_client(monkeypatch):
     monkeypatch.setattr(common.httpx, 'AsyncClient', FakeHTTPClient)
     monkeypatch.setattr(common, 'streamable_http_client', fake_transport)
     monkeypatch.setattr(common, 'ClientSession', FakeSession)
-    result = asyncio.run(common.mcp_tool('get_banking_snapshot', {'customer_id': 'C001'}))
+    result = asyncio.run(common.mcp_tool('get_account_balance', {'customer_id': 'C001'}))
 
     assert result == {'ok': True}
     assert observed['has_client']
     assert observed['url'] == common.MCP_URL
-    assert observed['tool'] == 'get_banking_snapshot'
+    assert observed['tool'] == 'get_account_balance'
     assert observed['arguments'] == {'customer_id': 'C001'}
     assert observed['http']['timeout'].read == 300.0

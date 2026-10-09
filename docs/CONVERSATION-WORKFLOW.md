@@ -37,10 +37,10 @@ sequenceDiagram
   Pix-->>Concierge: Execution receipt
   par Read back AFTER commit
     Concierge->>Account: POST /chat (fresh snapshot)
-    Account->>MCP: get_banking_snapshot
+    Account->>MCP: get_account_balance + list_account_transactions
   and Recalculate AFTER commit
     Concierge->>Wellness: POST /chat (fresh snapshot)
-    Wellness->>MCP: get_banking_snapshot + policy retrieval
+    Wellness->>MCP: get_account_balance + get_upcoming_obligations + policy retrieval
   end
   Concierge-->>BFF: Natural-language receipt + verified amounts
   BFF-->>UI: Receipt, balance and projected funds

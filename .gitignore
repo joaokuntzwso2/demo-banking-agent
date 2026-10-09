@@ -83,3 +83,12 @@ Thumbs.db
 # Bundled releases/exports should not be tracked in source
 *.zip
 *.tar.gz
+
+# Executive scenario run outputs and private operator configuration
+executive-scenario-report*.json
+.env.executive
+.env.portal.local
+.env.concierge.local
+.env.specialist.local
+.env.upstream-mcp.local
+*.trace-export.json

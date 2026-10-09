@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from .confirmation import parse_brl_amount
 
-INFO = re.compile(r'\b(how (do|does|can|to)|what (is|are)|tell me (about|how)|explain|can you explain|qué es|que es|cómo|como funciona|explica|explícame|información|informacion|ayuda con)\b',re.I)
+INFO = re.compile(r'\b(what happens if|what if|if i pay|si pago|qué pasaría si|que pasaria si|cuánto me quedaría si|how much would i have if)\b|\b(how (do|does|can|to)|what (is|are)|tell me (about|how)|explain|can you explain|qué es|que es|cómo|como funciona|explica|explícame|información|informacion|ayuda con)\b',re.I)
 NEGATED_COMMAND = {
  'block_card': re.compile(r"\b(?:do not|don.t|dont|never|not|no quiero|no deseo|no|sin)\s+(?:\w+\s+){0,3}(?:block|freeze|bloquear|bloquees|bloquea|congelar)\b",re.I),
  'open_dispute': re.compile(r"\b(?:do not|don.t|dont|never|not|no quiero|no deseo|no|sin)\s+(?:\w+\s+){0,3}(?:dispute|claim|reclama|reclamar|reclamación|disputa)\b",re.I),
@@ -66,3 +66,8 @@ def resolve_beneficiary(beneficiaries,message):
         if len(named)==1:return named[0]
     # Do NOT silently select an arbitrary first verified beneficiary.
     return None
+
+HANDOFF = re.compile(r"\b(human|real person|speak to (someone|a person|an agent)|talk to (someone|a person|an agent)|representative|escalate|support agent|agente humano|persona real|hablar con (una persona|alguien|un agente)|atención humana|asesor humano)\b",re.I)
+
+def wants_human(message):
+    return bool(HANDOFF.search(message)) and not bool(re.search(r"\b(do not|don't|no quiero|no necesito|sin)\s+.{0,35}(human|person|agente|persona)\b",message,re.I))

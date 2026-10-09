@@ -25,10 +25,56 @@ async def core(method,path,payload=None):
     async with httpx.AsyncClient(timeout=20) as c:
         r=await c.request(method,CORE_URL+path,headers={'X-Internal-Key':secret('BANK_CORE_READ_KEY' if method=='GET' else 'BANK_CORE_WRITE_KEY'),**outbound_headers()},json=payload)
         r.raise_for_status();return r.json()
+# Granular read capabilities minimize exposed banking data per specialist.
 @mcp.tool()
-async def get_banking_snapshot(customer_id:str='C001')->dict:
-    """Read authorized customer accounts, cards, transactions, obligations, beneficiaries and disputes."""
-    return await core('GET','/state/'+customer_id)
+async def get_account_balance(customer_id:str)->dict:
+    """Read checking account balance only, for authorized customer."""
+    snapshot=await core('GET','/state/'+customer_id)
+    return {'account':snapshot['account'],'customer':{'id':snapshot['customer']['id'],'name':snapshot['customer']['name']}}
+
+@mcp.tool()
+async def list_account_transactions(customer_id:str)->dict:
+    """Read transaction history and Pix receipts without beneficiary identifiers."""
+    snap=await core('GET','/state/'+customer_id)
+    return {'transactions':snap['transactions'],'payments':snap['payments']}
+
+@mcp.tool()
+async def get_card_status(customer_id:str)->dict:
+    """List customer cards and security state."""
+    return {'cards':(await core('GET','/state/'+customer_id))['cards']}
+
+@mcp.tool()
+async def list_card_transactions(customer_id:str)->dict:
+    """Read card transactions with merchant/amount for a dispute."""
+    s=await core('GET','/state/'+customer_id)
+    return {'transactions':[t for t in s['transactions'] if t['kind']=='card']}
+
+@mcp.tool()
+async def get_dispute_status(customer_id:str)->dict:
+    """Read existing card dispute case statuses."""
+    return {'disputes':(await core('GET','/state/'+customer_id))['disputes']}
+
+@mcp.tool()
+async def list_beneficiaries(customer_id:str)->dict:
+    """Read beneficiary IDs, names and verification status; never return Pix keys."""
+    s=await core('GET','/state/'+customer_id)
+    return {'beneficiaries':[{'id':b['id'],'name':b['name'],'verified':bool(b['verified'])} for b in s['beneficiaries']]}
+
+@mcp.tool()
+async def get_upcoming_obligations(customer_id:str)->dict:
+    """Read scheduled obligations for an educational cash-flow calculation."""
+    return {'obligations':(await core('GET','/state/'+customer_id))['obligations']}
+
+@mcp.tool()
+async def get_human_cases(customer_id:str)->dict:
+    """Read human support queue cases for the customer."""
+    return {'service_cases':(await core('GET','/state/'+customer_id))['service_cases']}
+
+@mcp.tool()
+async def request_human_escalation(customer_id:str,reason:str,priority:str='normal')->dict:
+    """Open a human service case only upon explicit customer request, no financial mutation."""
+    return await core('POST','/service-cases',{'customer_id':customer_id,'reason':reason,'priority':priority})
+
 @mcp.tool()
 async def request_card_block(customer_id:str,card_id:str)->dict:
     """Create pending human approval; DOES NOT block a card."""

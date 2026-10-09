@@ -22,6 +22,7 @@ services:
       BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:-local-demo-write-mcp}
       BANK_APPROVAL_KEY: ${BANK_APPROVAL_KEY:-local-demo-approval-core}
       BANK_RESET_KEY: ${BANK_RESET_KEY:-local-demo-reset-capability}
+      BANK_CASE_OPERATOR_KEY: ${BANK_CASE_OPERATOR_KEY:-local-demo-case-operator}
       AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
     depends_on:
       db:
@@ -45,6 +46,7 @@ services:
     environment:
       BANK_CORE_URL: http://core:8100
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp:*,localhost:*,127.0.0.1:*}
+      MCP_EXPOSE_LEGACY_SNAPSHOT: 'false'
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
       BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
       BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:-local-demo-write-mcp}
@@ -64,6 +66,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
       AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
@@ -81,6 +86,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
       SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
@@ -98,6 +106,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
       SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
@@ -115,6 +126,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
       SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
@@ -132,12 +146,25 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
       AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
     depends_on: *id001
     ports:
     - 127.0.0.1:8205:8200
+  risk:
+    build: .
+    command: uvicorn agents.risk:app --host 0.0.0.0 --port 8200
+    environment:
+      AGENT_ROLE: risk
+      MCP_SERVER_URL: http://mcp:8101/mcp
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: [mcp]
+    ports: ['127.0.0.1:8206:8200']
   concierge:
     build: .
     command: uvicorn agents.concierge:app --host 0.0.0.0 --port 8200
@@ -145,7 +172,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      USE_LLM_PROVIDER: ${USE_LLM_PROVIDER:-false}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-}
+      LLM_PROVIDER_KEY: ${LLM_PROVIDER_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
+      AGENT_RISK_URL: http://risk:8200
+      AGENT_RISK_API_KEY: ${AGENT_RISK_API_KEY:-}
       AGENT_ACCOUNT_URL: http://account:8200
       AGENT_ACCOUNT_API_KEY: ${AGENT_ACCOUNT_API_KEY:-}
       AGENT_CARD_URL: http://card:8200
@@ -171,6 +203,7 @@ services:
     - dispute
     - pix
     - wellness
+    - risk
     ports:
     - 127.0.0.1:8200:8200
   portal:
@@ -186,9 +219,11 @@ services:
       BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
       CONCIERGE_APPROVAL_KEY: ${CONCIERGE_APPROVAL_KEY:-local-demo-concierge-approval}
       BANK_RESET_KEY: ${BANK_RESET_KEY:-local-demo-reset-capability}
+      BANK_CASE_OPERATOR_KEY: ${BANK_CASE_OPERATOR_KEY:-local-demo-case-operator}
       DEMO_ACCESS_CODE: ${DEMO_ACCESS_CODE:-aurora-local-demo-only}
       DEMO_SESSION_SIGNING_KEY: ${DEMO_SESSION_SIGNING_KEY:-local-development-cookie-key-not-for-public-deployment}
       DEMO_RESET_CODE: ${DEMO_RESET_CODE:-local-presenter-reset}
+      DEMO_OPERATOR_CODE: ${DEMO_OPERATOR_CODE:-local-presenter-operator}
       DEMO_SECURE_COOKIE: ${DEMO_SECURE_COOKIE:-false}
       AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
       CONCIERGE_CALL_KEY: ${CONCIERGE_CALL_KEY:-local-demo-concierge-call}
