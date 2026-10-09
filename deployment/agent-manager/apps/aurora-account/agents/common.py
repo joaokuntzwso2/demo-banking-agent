@@ -2,7 +2,7 @@ import os, json, httpx, asyncio, time
 from pydantic import BaseModel,Field
 from fastapi import FastAPI,HTTPException,Header
 from banking_common.config import MCP_URL,MCP_TOKEN
-from banking_common.telemetry import install_telemetry,outbound_headers
+from banking_common.telemetry import install_telemetry,outbound_headers,business_span
 from banking_common.security import require_secret
 from mcp.client.streamable_http import streamable_http_client
 from mcp import ClientSession
@@ -22,7 +22,7 @@ def choose_language(message,provided='en'):
 
 # Defense in depth: Agent Manager MCP OAuth tool permissions must ALSO be configured.
 TOOLS_BY_ROLE = {
-    'account': {'get_account_balance','list_account_transactions','get_dispute_status','list_beneficiaries'},
+    'account': {'get_account_balance','list_account_transactions','get_dispute_status'},
     'card': {'get_card_status','request_card_block','execute_approved_card_block'},
     'dispute': {'list_card_transactions','get_dispute_status','get_human_cases',
                 'request_dispute','execute_approved_dispute','request_human_escalation'},
@@ -79,11 +79,13 @@ async def mcp_tool(name,arguments):
     # arguments were removed from this function (the SDK still yields 3 items).
     headers = {**await _mcp_headers(), **outbound_headers()}
     timeout = httpx.Timeout(30.0, read=300.0)
-    async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
-        async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                response = await session.call_tool(name, arguments)
+    with business_span('aurora.mcp.tool', **{'aurora.agent.role':role or 'unknown',
+                                            'mcp.tool.name':name, 'gen_ai.operation.name':'execute_tool'}):
+        async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
+            async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    response = await session.call_tool(name, arguments)
                 if response.isError:
                     raise RuntimeError(str(response.content))
                 if response.structuredContent:
@@ -121,10 +123,20 @@ async def llm(system,user):
     options={'api_key':key}
     if url:options['base_url']=url
     client=AsyncOpenAI(**options)
-    result=await client.chat.completions.create(
-        model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),temperature=0,
-        messages=[{'role':'system','content':system},{'role':'user','content':user}])
-    return result.choices[0].message.content
+    model=os.getenv('OPENAI_MODEL','gpt-4.1-mini')
+    with business_span('aurora.llm.chat', **{'gen_ai.operation.name':'chat',
+          'gen_ai.request.model':model,'aurora.llm.path':'managed' if managed else 'local'} ) as span:
+        result=await client.chat.completions.create(
+            model=model,temperature=0,
+            messages=[{'role':'system','content':system},{'role':'user','content':user}])
+        if span is not None:
+            usage=getattr(result,'usage',None)
+            if usage:
+                if getattr(usage,'prompt_tokens',None) is not None:
+                    span.set_attribute('gen_ai.usage.input_tokens',usage.prompt_tokens)
+                if getattr(usage,'completion_tokens',None) is not None:
+                    span.set_attribute('gen_ai.usage.output_tokens',usage.completion_tokens)
+        return result.choices[0].message.content
 
 def retrieve(topic,lang,query=''):
     """Local document retrieval: filter corpus by topic/language, then rank by lexical term overlap.

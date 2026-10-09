@@ -27,6 +27,7 @@ async function send(message){
   try{
     const result=await api('/api/chat',{method:'POST',body:JSON.stringify({message,language:state.language,history:state.history.slice(-8)})});
     placeholder.textContent=result.message;
+    renderPolicyEvidence(result.data?.specialists||[],placeholder);
     state.history.push({role:'user',content:message},{role:'assistant',content:result.message});
     if(result.data?.language&&result.data.language!==state.language){state.language=result.data.language;$('lang').value=state.language;localize()}
     for(const action of result.next_actions||[])addApproval(action,message,state.language);
@@ -34,6 +35,23 @@ async function send(message){
     await refresh();
   }catch(e){placeholder.textContent='Error: '+e.message}
   finally{state.busy=false;$('messages').scrollTop=$('messages').scrollHeight}
+}
+function renderPolicyEvidence(specialists,messageElement){
+  // Only metadata derived from actual specialist responses is displayed.
+  // This is not a native Agent Manager evaluation or a fabricated trace.
+  const sources=[];
+  for(const agent of specialists){
+    const data=agent.data||{};
+    for(const cite of data.citations||[]){
+      if(!cite.id||!cite.version)continue;
+      const label=cite.id+' v'+cite.version;
+      if(!sources.includes(label))sources.push(label);
+    }
+  }
+  if(!sources.length)return;
+  const note=document.createElement('small');note.className='policy-evidence';
+  note.textContent=(state.language==='es'?'Fuentes políticas verificadas: ':'Policy evidence: ')+sources.slice(0,5).join(' · ');
+  messageElement.append(document.createTextNode('\n'),note);
 }
 async function decide(id,approved){
   if(state.busy)return;

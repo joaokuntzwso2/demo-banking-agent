@@ -14,13 +14,12 @@ async def account(r):
     acct=await mcp_tool('get_account_balance',{'customer_id':r.customer_id})
     activity=await mcp_tool('list_account_transactions',{'customer_id':r.customer_id})
     disputes=await mcp_tool('get_dispute_status',{'customer_id':r.customer_id})
-    payees=await mcp_tool('list_beneficiaries',{'customer_id':r.customer_id})
     balance=acct['account']['balance']
     return AgentResponse(agent='account',message=phrase(r.language,
         f"Your checking balance is {money(balance,'en')}. Credit-card charges do not immediately debit checking.",
         f"El saldo de tu cuenta es {money(balance,'es')}. Los cargos de tarjeta no se debitan inmediatamente de la cuenta."),
         data={'account':acct['account'],'transactions':activity['transactions'],
-              'payments':activity['payments'],'beneficiaries':payees['beneficiaries'],'disputes':disputes['disputes']})
+              'payments':activity['payments'],'disputes':disputes['disputes']})
 
 async def card(r):
     cards=(await mcp_tool('get_card_status',{'customer_id':r.customer_id}))['cards']

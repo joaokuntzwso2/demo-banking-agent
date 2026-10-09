@@ -67,8 +67,12 @@ def response(action, outcome, specialist_results, language='en'):
             return ((f'✅ Pago Pix completado (referencia {rid}). No pude verificar el saldo actualizado; revisa tu cuenta.'
                      if lang == 'es' else
                      f'✅ Pix completed (reference {rid}). I could not verify the updated balance; check your account dashboard.'), False)
-        beneficiaries = account.get('beneficiaries', [])
-        name = next((b['name'] for b in beneficiaries if b['id'] == outcome.get('beneficiary_id')), None)
+        # Display name comes from the customer's posted Pix receipt, not
+        # a broad beneficiary list supplied to the read-only Account agent.
+        name = payment.get('beneficiary_name') if payment else None
+        if not name:  # compatibility with pre-v4 local fixtures only
+            beneficiaries = account.get('beneficiaries', [])
+            name = next((b['name'] for b in beneficiaries if b['id'] == outcome.get('beneficiary_id')), None)
         name = name or ('el beneficiario verificado' if lang == 'es' else 'the verified beneficiary')
         amount = money(outcome['amount'], lang)
         balance_text = money(balance, lang)

@@ -27,6 +27,8 @@ spec:
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_APPROVAL_KEY}}
             - name: BANK_RESET_KEY
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_RESET_KEY}}
+            - name: BANK_CASE_OPERATOR_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CASE_OPERATOR_KEY}}
             - {name: ENABLE_DEMO_RESET, value: 'true'} # SYNTHETIC DEMO ONLY
           readinessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 5, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 15, periodSeconds: 10}
@@ -100,6 +102,10 @@ spec:
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_READ_KEY}}
             - name: BANK_RESET_KEY
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_RESET_KEY}}
+            - name: BANK_CASE_OPERATOR_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CASE_OPERATOR_KEY}}
+            - name: DEMO_OPERATOR_CODE
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_OPERATOR_CODE}}
             - name: CONCIERGE_CALL_KEY
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_CALL_KEY}}
             - name: CONCIERGE_APPROVAL_KEY

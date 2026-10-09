@@ -41,3 +41,6 @@
 .case-panel .operator-action{border:1px solid #afdfd4;background:#e8f8f3;color:#076c5a;padding:9px 12px;border-radius:8px;font-size:11px;margin-top:12px}
 @media(max-width:1000px){.scenario-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.scenario-grid{grid-template-columns:1fr}}
+
+/* Evidence badges are derived from specialist retrieval metadata, not guessed. */
+.policy-evidence{display:block;margin-top:10px;padding-top:7px;border-top:1px solid rgba(130,150,170,.25);font-size:11px;opacity:.8;line-height:1.5;}

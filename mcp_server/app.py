@@ -36,7 +36,9 @@ async def get_account_balance(customer_id:str)->dict:
 async def list_account_transactions(customer_id:str)->dict:
     """Read transaction history and Pix receipts without beneficiary identifiers."""
     snap=await core('GET','/state/'+customer_id)
-    return {'transactions':snap['transactions'],'payments':snap['payments']}
+    names={b['id']:b['name'] for b in snap['beneficiaries']}
+    receipts=[{**p,'beneficiary_name':names.get(p['beneficiary_id'],'Verified beneficiary')} for p in snap['payments']]
+    return {'transactions':snap['transactions'],'payments':receipts}
 
 @mcp.tool()
 async def get_card_status(customer_id:str)->dict:

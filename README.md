@@ -76,7 +76,7 @@ flowchart TD
 | Agent | Business responsibility | Actual MCP tools or communication |
 |---|---|---|
 | **Aurora Concierge** (customer-facing) | Language, intent, specialist selection, orchestration, persisted approval workflow, authorized execution and post-commit verification | Authenticated `/chat`, `/execute` on specialists and `/workflows`/`/approvals` with Core; **no Banking MCP permission** |
-| **Account Intelligence** | Explain checking balance, transactions and paid Pix receipts | `get_account_balance`, `list_account_transactions`, `get_dispute_status`, `list_beneficiaries` |
+| **Account Intelligence** | Explain checking balance, transactions and paid Pix receipts | `get_account_balance`, `list_account_transactions`, `get_dispute_status` |
 | **Card Security** | Identify a single card, show status, prepare approval and block only with authorization | `get_card_status`, `request_card_block`, `execute_approved_card_block` |
 | **Dispute Resolution** | Explain cited fictional policies, create disputed-card case; explicit human escalation | `list_card_transactions`, `get_dispute_status`, `get_human_cases`, `request_dispute`, `execute_approved_dispute`, `request_human_escalation`, policy retrieval |
 | **Pix Payments** | Check amount, balance, recipient verification and explicit consent; persist single-debit simulated Pix | `get_account_balance`, `list_beneficiaries`, `request_pix`, `execute_approved_pix` |
@@ -97,7 +97,7 @@ A `WorkflowSession` record in Core keeps `pending` approval IDs, completed outco
 
 ## 3 — Banking MCP interface: 15 governed tools
 
-Eight purpose-specific read tools: `get_account_balance`, `list_account_transactions`, `get_card_status`, `list_card_transactions`, `get_dispute_status`, `list_beneficiaries`, `get_upcoming_obligations`, `get_human_cases`.
+Eight purpose-specific read tools: `get_account_balance`, `list_account_transactions`, `get_card_status`, `list_card_transactions`, `get_dispute_status`, `get_upcoming_obligations`, `get_human_cases`.
 
 Seven change-related tools: `request_human_escalation`, `request_card_block`, `execute_approved_card_block`, `request_dispute`, `execute_approved_dispute`, `request_pix`, `execute_approved_pix`. Case escalation opens a nonfinancial human-service task only upon an explicit customer request. Banking-money/card/dispute writes continue to require their immutable human approval payloads.
 
@@ -105,7 +105,7 @@ The old broadly exposed `get_banking_snapshot` MCP tool was removed. Banking Cor
 
 ## 4 — The policy retrieval implementation
 
-This release includes **60 versioned, fictional policy records** (30 each language), including disputes, evidence, duplicate claims, account/cash-flow constraints, Pix beneficiary verification, customer privacy, human escalation and agent governance. `scripts/ingest-policies.py` produces a **persistent SQLite FTS5 lexical index**, preserving document ID/version/effective date. Agents filter by role topic/language, retrieve up to three ranked policies, and generate conservative customer answers using independently verified financial facts. Responses expose citation metadata and the actual retrieval method.
+This release includes **64 versioned, fictional policy records** (32 each language), including disputes, evidence, duplicate claims, account/cash-flow constraints, Pix beneficiary verification, customer privacy, human escalation and agent governance. `scripts/ingest-policies.py` produces a **persistent SQLite FTS5 lexical index**, preserving document ID/version/effective date. Agents filter by role topic/language, retrieve up to three ranked policies, and generate conservative customer answers using independently verified financial facts. Responses expose citation metadata and the actual retrieval method.
 
 ```bash
 python scripts/ingest-policies.py
@@ -276,3 +276,80 @@ python scripts/check-managed-config.py --mode concierge --env-file deployment/ag
 Use [manual deployment details](docs/DEPLOY-MANUAL-AMP.md) to configure actual endpoint URLs and credentials. `deployment/agent-manager/compose.portal.yaml` starts only supporting services and the portal (not the hosted agents). There is **no automated on-prem Agent Manager deployment** in this package.
 
 **Platform showcase:** attach a managed LLM provider, configure gateway-level guardrails and quotas, assign scopes across all MCP tools, enable real tracing and evaluation monitors, demonstrate a vetted Agent Kind, and manually test environment lifecycle / rollback. Follow [Platform Scenarios](docs/PLATFORM-SCENARIOS.md) for each verifiable control and do not conflate local scorecards with native WSO2 evaluation results.
+
+
+## Executive v4 — Application enhancements before manual Agent Manager setup
+
+The v4 upgrade adds implementable safeguards and observability without claiming that
+any native WSO2 policy, identity, monitor, or promotion action has been performed.
+
+1. **Managed-model explanatory generation:** Dispute and Financial Wellness optionally
+   call the configured OpenAI-compatible **managed** LLM endpoint for a bounded
+   policy explanation. The core customer answer, amount, cash-flow arithmetic,
+   approvals and receipts remain deterministic, and policy evidence is cited.
+   Set `LLM_GROUNDED_ANSWERS=true` only after a managed provider is bound to
+   each specialist. For local offline demonstration leave it `false`.
+   Model/gateway errors are surfaced; blocked requests are not silently retried
+   using an unmanaged model. The response metadata records `generation_mode`.
+   The generated sentence is filtered for unsafe claims and numbers, but this
+   is **not** a substitute for an Agent Manager gateway guardrail.
+
+2. **Policy lifecycle:** `agents/retrieval.py` now selects only policies effective
+   on `POLICY_AS_OF_DATE` (or today's date) and deduplicates their active
+   version **before** FTS5 ranking or optional semantic ranking. Two past/future
+   fixtures demonstrate that superseded policy text must not leak into current
+   retrieval. `POLICY_INDEX_PATH` should point to durable storage for a real
+   managed rollout; default `/tmp` is rebuilt from Git-managed policy data.
+
+3. **Managed embeddings do not bypass the gateway:** A hosted agent cannot use
+   direct `OPENAI_API_KEY` for embeddings. Semantic retrieval is disabled until
+   you explicitly configure *separate* `EMBEDDING_PROVIDER_URL` and
+   `EMBEDDING_PROVIDER_KEY` (when a compatible governed embeddings API exists)
+   and run `scripts/ingest-policies.py --embeddings`. Until then the evidence
+   truthfully reports `persistent_fts5_bm25`.
+
+4. **Instrumentable workflow:** Custom spans cover Concierge workflow,
+   specialist orchestration, MCP tool calls, LLM inference and policy
+   retrieval. W3C `traceparent` context is forwarded when OpenTelemetry is
+   active. Span attributes do **not** include customer names, bank data,
+   prompts, tool arguments or secrets. Managed traces and evaluations still
+   require manual platform configuration and inspection.
+
+5. **Minimal customer-data access:** Account Intelligence no longer invokes
+   `list_beneficiaries`. The payment history tool supplies the beneficiary's
+   display name on *that customer's own posted receipt* without exposing
+   every recipient or a Pix key. The UI shows verified retrieval citations
+   as source metadata, never as fabricated platform trace events.
+
+6. **Kubernetes reference fix:** Core and Portal both receive
+   `BANK_CASE_OPERATOR_KEY`; Portal receives `DEMO_OPERATOR_CODE`. The
+   supporting-services manifest still needs your image/DNS/Secret adjustments,
+   and only demonstrates a synthetic environment.
+
+### Run and verify the upgrade
+
+```bash
+python3 deployment/agent-manager/scripts/prepare-apps.py
+python3 scripts/preflight-v4.py --mode source
+bash scripts/verify-v4.sh             # requires local Docker services
+bash scripts/verify-v4.sh --full      # resets and writes only synthetic data
+```
+
+For manually managed runtimes, the preflight validates environment *shape* but
+cannot attest to gateway tool scopes, LLM guardrails, tracing or platform
+permissions:
+
+```bash
+python3 scripts/preflight-v4.py --mode hosted-portal --env-file /path/to/private-portal.env
+python3 scripts/preflight-v4.py --mode hosted-concierge --env-file /path/to/private-concierge.env
+python3 scripts/preflight-v4.py --mode hosted-specialist --env-file /path/to/private-specialist.env
+python3 scripts/preflight-v4.py --mode hosted-upstream-mcp --env-file /path/to/private-upstream.env
+```
+
+Agent Manager's own injected variables should be present in the **actual runtime
+environment** for hosted checks; plain example files are intentionally incomplete.
+If your specific managed endpoint is not OpenAI-chat/embedding compatible,
+configure a supported protocol adapter separately; do not guess URL suffixes.
+
+See [V4 Implementation Notes](docs/IMPLEMENTATION-V4.md) for the exact security,
+policy, telemetry, UI and rollout acceptance matrix.

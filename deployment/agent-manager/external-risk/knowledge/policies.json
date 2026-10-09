@@ -594,5 +594,47 @@
     "title": "What-if planning",
     "text": "Un pago hipotético solo sirve para ilustrar escenarios. No debe crear autorizaciones ni mover fondos. El importe se resta solo al calcular la proyección.",
     "fictional": true
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "0.8",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2025-01-01",
+    "expires": "2025-12-31",
+    "fictional": true,
+    "title": "Legacy eligibility (expired TEST FIXTURE)",
+    "text": "Legacy process example (expired). This fictional outdated version must never appear in current answers."
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "2.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2028-01-01",
+    "fictional": true,
+    "title": "Future eligibility (unpublished TEST FIXTURE)",
+    "text": "Future policy (not yet effective); must never be used early."
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "0.8",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2025-01-01",
+    "expires": "2025-12-31",
+    "fictional": true,
+    "title": "Legacy eligibility (expired TEST FIXTURE)",
+    "text": "Proceso anterior de ejemplo (caducado). Esta versión ficticia no debe aparecer en respuestas actuales."
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "2.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2028-01-01",
+    "fictional": true,
+    "title": "Future eligibility (unpublished TEST FIXTURE)",
+    "text": "Política futura (todavía no vigente); nunca debe utilizarse antes de tiempo."
   }
 ]

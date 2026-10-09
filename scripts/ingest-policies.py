@@ -14,8 +14,15 @@ build_index()
 async def embed():
     from openai import AsyncOpenAI
     key=os.getenv('OPENAI_API_KEY');model=os.getenv('OPENAI_EMBEDDING_MODEL')
-    if not key or not model:raise SystemExit('Both OPENAI_API_KEY and OPENAI_EMBEDDING_MODEL are required for --embeddings')
-    client=AsyncOpenAI(api_key=key,**({'base_url':os.getenv('OPENAI_URL')} if os.getenv('OPENAI_URL') else {}))
+    managed=os.getenv('WSO2_MODE','false').lower()=='true'
+    if managed:
+        key=os.getenv('EMBEDDING_PROVIDER_KEY')
+        url=os.getenv('EMBEDDING_PROVIDER_URL')
+        if not key or not url:raise SystemExit('Managed embedding ingestion requires governed EMBEDDING_PROVIDER_URL and EMBEDDING_PROVIDER_KEY')
+    else:
+        url=os.getenv('OPENAI_URL')
+    if not key or not model:raise SystemExit('Embedding credential and OPENAI_EMBEDDING_MODEL required for --embeddings')
+    client=AsyncOpenAI(api_key=key,**({'base_url':url} if url else {}))
     with sqlite3.connect(INDEX) as db:
         entries=db.execute('SELECT rowid,text FROM policies').fetchall()
     reply=await client.embeddings.create(model=model,input=[row[1] for row in entries])

@@ -82,6 +82,7 @@ class GraphState(TypedDict,total=False):
     language:str
     roles:list[str]
     results:list[dict]
+    tasks:list[dict]
     steps:list[dict]
 
 async def interpret_node(state:GraphState):
@@ -96,7 +97,9 @@ async def plan_node(state:GraphState):
     # state following the approved commit rather than present stale estimates.
     if 'pix' in roles and any(w in msg for w in ('then','después','luego','after','remaining','restante')):
         roles=[r for r in roles if r not in ('account','wellness')]
-    return {'roles':roles,'steps':state['steps']+[{'stage':'plan','status':'completed','roles':roles}]}
+    tasks=[{'role':role,'phase':'read_or_prepare','depends_on':[]} for role in roles]
+    return {'roles':roles,'tasks':tasks,'steps':state['steps']+[
+        {'stage':'plan','status':'completed','roles':roles,'tasks':tasks}]}
 async def invoke_roles(request,roles,lang):
     async with httpx.AsyncClient(timeout=50) as client:
         async def one(role):
@@ -109,7 +112,9 @@ async def invoke_roles(request,roles,lang):
                      'Servicio temporalmente no disponible.'),'data':{'error_type':type(e).__name__},'next_actions':[]}
         return await asyncio.gather(*(one(role) for role in roles))
 async def invoke_node(state:GraphState):
-    results=await invoke_roles(state['request'],state['roles'],state['language'])
+    with business_span('aurora.concierge.invoke_specialists', **{
+        'aurora.specialist.count':len(state['roles'])}):
+        results=await invoke_roles(state['request'],state['roles'],state['language'])
     steps=[{'stage':'specialist','role':r,'status':'completed' if 'error_type' not in o.get('data',{}) else 'unavailable'}
            for r,o in zip(state['roles'],results)]
     return {'results':results,'steps':state['steps']+steps}
@@ -153,7 +158,8 @@ async def concierge(r:ChatRequest):
         new_command=any(action_intent(original,a).action for a in ('block_card','open_dispute','execute_pix'))
         if not new_command and not lower.startswith(('how','what','why','cómo','qué','que','explain','explica')):
             r=r.model_copy(update={'message':clarification['request']+'; '+original})
-    state=await workflow.ainvoke({'request':r.model_dump(),'steps':[]})
+    with business_span('aurora.concierge.workflow', **{'aurora.workflow.phase':'customer_request'}):
+        state=await workflow.ainvoke({'request':r.model_dump(),'steps':[]})
     lang=state['language'];results=state.get('results',[])
     approvals=[a for result in results for a in result.get('next_actions',[])]
     pending={a['approval_id']:a for a in old.get('pending',[])}
@@ -220,7 +226,9 @@ async def approve(req:ApprovalDecision,x_internal_key:str|None=Header(None)):
             if action not in config:raise HTTPException(400,'Unsupported operation')
             role,details=config[action]
             async with httpx.AsyncClient(timeout=60) as client:
-                result=await client.post(ROLE_URLS[role].rstrip('/')+'/execute',
+                with business_span('aurora.concierge.approved_execution', **{
+                    'aurora.specialist.role':role, 'aurora.approval.action':action}):
+                    result=await client.post(ROLE_URLS[role].rstrip('/')+'/execute',
                     headers={'X-Internal-Key':secret('SPECIALIST_EXECUTION_KEY'),**gateway_headers(role)},
                     json={'customer_id':req.customer_id,'approval_id':req.approval_id,'payload':details})
                 result.raise_for_status();outcome=result.json()
