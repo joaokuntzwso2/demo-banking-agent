@@ -1,0 +1,110 @@
+# Supporting workloads: deploy with kubectl after creating aurora-demo-secrets.
+# Replace image placeholder and ensure private MCP and Core network reachability.
+# The 6 agents are NOT deployed here; deploy them through Agent Manager Console.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-core, namespace: aurora-demo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-core}}
+  template:
+    metadata: {labels: {app: aurora-core}}
+    spec:
+      containers:
+        - name: core
+          image: REPLACE_REGISTRY/banco-aurora:1.0.0
+          imagePullPolicy: Always
+          command: ["uvicorn", "mock_core.app:app", "--host", "0.0.0.0", "--port", "8100"]
+          ports: [{containerPort: 8100}]
+          env:
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DATABASE_URL}}
+            - name: BANK_INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - {name: ENABLE_DEMO_RESET, value: 'true'} # SYNTHETIC DEMO ONLY
+          readinessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 5, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 15, periodSeconds: 10}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-core, namespace: aurora-demo}
+spec:
+  selector: {app: aurora-core}
+  ports: [{name: http, port: 8100, targetPort: 8100}]
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-mcp, namespace: aurora-demo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-mcp}}
+  template:
+    metadata: {labels: {app: aurora-mcp}}
+    spec:
+      containers:
+        - name: mcp
+          image: REPLACE_REGISTRY/banco-aurora:1.0.0
+          imagePullPolicy: Always
+          command: ["uvicorn", "mcp_server.app:app", "--host", "0.0.0.0", "--port", "8101"]
+          ports: [{containerPort: 8101}]
+          env:
+            - {name: BANK_CORE_URL, value: 'http://aurora-core.aurora-demo.svc.cluster.local:8100'}
+            - name: BANK_INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - {name: MCP_ALLOWED_HOSTS, value: 'aurora-mcp:*,aurora-mcp.aurora-demo.svc.cluster.local:*'}
+            # Set MCP_ALLOWED_ORIGINS only to gateway origin(s) proven necessary.
+          readinessProbe: {tcpSocket: {port: 8101}, initialDelaySeconds: 5, periodSeconds: 5}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-mcp, namespace: aurora-demo}
+spec:
+  selector: {app: aurora-mcp}
+  ports: [{name: mcp, port: 8101, targetPort: 8101}]
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-portal, namespace: aurora-demo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-portal}}
+  template:
+    metadata: {labels: {app: aurora-portal}}
+    spec:
+      containers:
+        - name: portal
+          image: REPLACE_REGISTRY/banco-aurora:1.0.0
+          imagePullPolicy: Always
+          command: ["uvicorn", "demo_portal.app:app", "--host", "0.0.0.0", "--port", "8300"]
+          ports: [{containerPort: 8300}]
+          env:
+            - {name: BANK_CORE_URL, value: 'http://aurora-core.aurora-demo.svc.cluster.local:8100'}
+            - {name: WSO2_MODE, value: 'true'}
+            - name: BANK_INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - name: CONCIERGE_URL
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_URL}}
+            - name: CONCIERGE_API_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_API_KEY}}
+            - name: DEMO_SESSION_TOKEN
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_SESSION_TOKEN}}
+          readinessProbe: {httpGet: {path: /, port: 8300}, initialDelaySeconds: 5, periodSeconds: 5}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-portal, namespace: aurora-demo}
+spec:
+  selector: {app: aurora-portal}
+  ports: [{name: http, port: 8300, targetPort: 8300}]
+  type: ClusterIP

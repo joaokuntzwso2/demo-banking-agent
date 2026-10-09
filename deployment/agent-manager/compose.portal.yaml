@@ -1,0 +1,46 @@
+# Hybrid smoke test: Core, PostgreSQL, upstream MCP, and Portal remain local,
+# while all six agents live in on-prem WSO2 Agent Manager.
+# Run: docker compose -f deployment/agent-manager/compose.portal.yaml \
+#      --env-file deployment/agent-manager/.env.portal.local up --build -d
+# Env file must contain real Concierge invoke URL and API key.
+services:
+  db:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: aurora, POSTGRES_PASSWORD: aurora_demo, POSTGRES_DB: aurora}
+    volumes: [aurora_db:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aurora"], interval: 5s, retries: 15}
+  core:
+    build: {context: ../.., dockerfile: Dockerfile}
+    environment:
+      DATABASE_URL: postgresql+psycopg://aurora:aurora_demo@db:5432/aurora
+      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      ENABLE_DEMO_RESET: 'true'
+    command: uvicorn mock_core.app:app --host 0.0.0.0 --port 8100
+    depends_on: {db: {condition: service_healthy}}
+    ports: ['8100:8100']
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=3).read()"]
+      interval: 5s
+      retries: 15
+  mcp:
+    build: {context: ../.., dockerfile: Dockerfile}
+    command: uvicorn mcp_server.app:app --host 0.0.0.0 --port 8101
+    environment:
+      BANK_CORE_URL: http://core:8100
+      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp:*,localhost:*,127.0.0.1:*}
+    depends_on: {core: {condition: service_healthy}}
+    ports: ['8101:8101']
+  portal:
+    build: {context: ../.., dockerfile: Dockerfile}
+    command: uvicorn demo_portal.app:app --host 0.0.0.0 --port 8300
+    environment:
+      BANK_CORE_URL: http://core:8100
+      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      CONCIERGE_URL: ${CONCIERGE_URL:?Set deployed Concierge invoke URL}
+      CONCIERGE_API_KEY: ${CONCIERGE_API_KEY:?Set gateway API key}
+      DEMO_SESSION_TOKEN: ${DEMO_SESSION_TOKEN:-local-demo-session}
+      WSO2_MODE: 'true'
+    depends_on: {core: {condition: service_healthy}}
+    ports: ['8300:8300']
+volumes: {aurora_db: {}}

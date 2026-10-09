@@ -1,0 +1,85 @@
+# Banco Aurora — commit source, never local credentials or generated state.
+
+# Local environment and private deployment overrides.
+# Keep documentation-only templates ending in .example.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env*.example
+.envrc
+.envrc.*
+!.envrc.example
+
+# Secrets, keys and cloud credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kubeconfig
+**/kubeconfig
+**/credentials.json
+**/*-credentials.json
+**/service-account.json
+**/*-service-account.json
+**/secrets.yaml
+**/secrets.yml
+**/secret.yaml
+**/secret.yml
+.aws/
+.kube/
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Python: runtime caches, local virtualenvs, tests and build products
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Local banking data, logs and runtime output
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.log
+logs/
+data/
+local-data/
+backups/
+*.pid
+*.sock
+
+# Frontend and editor artifacts
+node_modules/
+.next/
+.vite/
+.npm/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Bundled releases/exports should not be tracked in source
+*.zip
+*.tar.gz
