@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 
 def test_mcp_tool_uses_preconfigured_httpx_client(monkeypatch):
+    import pytest
+    pytest.importorskip('mcp')
     import agents.common as common
 
     observed = {}

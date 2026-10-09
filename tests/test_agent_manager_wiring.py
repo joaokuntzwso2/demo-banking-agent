@@ -53,16 +53,24 @@ def test_bff_only_calls_concierge_for_approvals(monkeypatch):
         def __init__(self,**kwargs):pass
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
-        async def post(self,url,**kwargs):
-            calls.append((url,kwargs));return FakeResponse()
+        async def request(self,method,url,**kwargs):
+            calls.append((method,url,kwargs));return FakeResponse()
     monkeypatch.setattr(portal.httpx,'AsyncClient',FakeClient)
     monkeypatch.setattr(portal,'CONCIERGE','https://amp.example/aurora-concierge')
-    monkeypatch.setattr(portal,'CONCIERGE_API_KEY','test-key')
+    monkeypatch.setenv('CONCIERGE_API_KEY','test-gateway-key')
     client=TestClient(portal.app)
-    res=client.post('/api/approvals/APR-1/decide',headers={'X-Demo-Session':portal.TOKEN},
+    unauth=client.post('/api/approvals/APR-1/decide',json={'approved':True})
+    assert unauth.status_code==401
+    login=client.post('/api/login',json={'access_code':'aurora-local-demo-only'})
+    assert login.status_code==200
+    csrf=login.json()['csrf_token']
+    no_csrf=client.post('/api/approvals/APR-1/decide',json={'approved':True})
+    assert no_csrf.status_code==403
+    res=client.post('/api/approvals/APR-1/decide',headers={'X-CSRF-Token':csrf},
                     json={'approved':True,'language':'en','original_request':'pay'})
     assert res.status_code==200
-    assert calls[0][0]=='https://amp.example/aurora-concierge/approve'
-    assert calls[0][1]['headers']['X-API-Key']=='test-key'
-    assert calls[0][1]['json']['approval_id']=='APR-1'
-    assert 'card' not in calls[0][0] and 'pix' not in calls[0][0]
+    assert calls[0][1]=='https://amp.example/aurora-concierge/approve'
+    assert calls[0][2]['headers']['X-API-Key']=='test-gateway-key'
+    assert calls[0][2]['json']['approval_id']=='APR-1'
+    assert calls[0][2]['json']['workflow_id']
+    assert 'card' not in calls[0][1] and 'pix' not in calls[0][1]

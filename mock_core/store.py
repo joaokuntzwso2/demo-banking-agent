@@ -1,6 +1,6 @@
 """Single source of truth. SQLite for local demo; PostgreSQL via DATABASE_URL for on-prem."""
 import os, json, uuid, logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy import create_engine, Column, String, Integer, Numeric, ForeignKey, Text, select, event, delete
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -41,6 +41,9 @@ class Ledger(Base):
 class Approval(Base):
     __tablename__='approvals'
     id=Column(String,primary_key=True); customer_id=Column(String); action=Column(String); payload=Column(Text); status=Column(String); created=Column(String)
+class WorkflowSession(Base):
+    __tablename__='workflow_sessions'
+    id=Column(String,primary_key=True); customer_id=Column(String); state_json=Column(Text); updated=Column(String)
 class Event(Base):
     __tablename__='events'
     id=Column(String,primary_key=True); customer_id=Column(String); type=Column(String); payload=Column(Text); created=Column(String)
@@ -85,7 +88,18 @@ def _add_seed_records(s: Session) -> None:
         s.add(Transaction(id=t[0],customer_id='C001',merchant=t[1],amount=Decimal(t[2]),kind=t[3],timestamp=now(),status=t[4]))
     s.add(Beneficiary(id='BEN001',customer_id='C001',name='Condomínio Jardim do Sol',pix_key='condominio@example.invalid',verified=1))
     for i,(name,amount) in enumerate([('Electricity',Decimal('340')),('Groceries',Decimal('950')),('Internet and mobile',Decimal('210')),('Insurance',Decimal('600'))]):
-        s.add(Obligation(id=f'OB{i+1}',customer_id='C001',label=name,amount=amount,due=f'2026-10-{17+i*2}'))
+        s.add(Obligation(id=f'OB{i+1}',customer_id='C001',label=name,amount=amount,due=(datetime.now(timezone.utc).date()+timedelta(days=5+i*3)).isoformat()))
+
+
+    # Second synthetic customer for account-ownership/authorization tests.
+    s.add(Customer(id='C002',name='Alex Rivera',email='alex@example.invalid'))
+    s.flush()
+    s.add(Account(id='ACC002',customer_id='C002',balance=Decimal('3200.00'),currency='BRL'))
+    s.add(Card(id='CARD002',customer_id='C002',last4='2277',status='active'))
+    s.add(Transaction(id='TXN-COFFEE-2',customer_id='C002',merchant='Cafe Rivera',
+                      amount=Decimal('42.00'),kind='card',timestamp=now(),status='posted'))
+    s.add(Beneficiary(id='BEN002',customer_id='C002',name='Centro Cultural Rivera',
+                      pix_key='alex-center@example.invalid',verified=1))
 
 
 def initialize_database() -> None:
@@ -117,7 +131,7 @@ def reset() -> None:
     with Session(engine) as s:
         # Account must be removed before Customer (a real database foreign key).
         # Synthetic data is removed as one unit and not visible half-updated.
-        for model in (Ledger, Payment, Dispute, Approval, Event, Transaction,
+        for model in (WorkflowSession, Ledger, Payment, Dispute, Approval, Event, Transaction,
                       Beneficiary, Obligation, Card, Account, Customer):
             s.execute(delete(model))
         s.flush()

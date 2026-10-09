@@ -1,0 +1,40 @@
+name: Banco Aurora quality gates
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  source-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q agents banking_common mock_core demo_portal mcp_server
+      - run: node --check demo_portal/static/app.js
+      - run: pytest -q
+      - name: Ensure Agent Manager generated folders match canonical code
+        run: |
+          python deployment/agent-manager/scripts/prepare-apps.py
+          git diff --exit-code -- deployment/agent-manager/apps deployment/agent-manager/upstream-mcp
+  synthetic-integration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install httpx
+      - run: docker compose up -d --build
+      - run: bash scripts/smoke-test.sh
+      - run: python scripts/integration-test.py
+      - if: always()
+        run: docker compose down

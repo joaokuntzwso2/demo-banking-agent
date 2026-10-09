@@ -13,11 +13,14 @@ services:
     build: {context: ../.., dockerfile: Dockerfile}
     environment:
       DATABASE_URL: postgresql+psycopg://aurora:aurora_demo@db:5432/aurora
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:?required}
+      BANK_APPROVAL_KEY: ${BANK_APPROVAL_KEY:?required}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:?required}
       ENABLE_DEMO_RESET: 'true'
     command: uvicorn mock_core.app:app --host 0.0.0.0 --port 8100
     depends_on: {db: {condition: service_healthy}}
-    ports: ['8100:8100']
+    ports: ['127.0.0.1:8100:8100']
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=3).read()"]
       interval: 5s
@@ -27,20 +30,27 @@ services:
     command: uvicorn mcp_server.app:app --host 0.0.0.0 --port 8101
     environment:
       BANK_CORE_URL: http://core:8100
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:?required}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp:*,localhost:*,127.0.0.1:*}
     depends_on: {core: {condition: service_healthy}}
-    ports: ['8101:8101']
+    ports: ['127.0.0.1:8101:8101']
   portal:
     build: {context: ../.., dockerfile: Dockerfile}
     command: uvicorn demo_portal.app:app --host 0.0.0.0 --port 8300
     environment:
       BANK_CORE_URL: http://core:8100
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:?BANK_INTERNAL_KEY required}
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:?required}
+      CONCIERGE_CALL_KEY: ${CONCIERGE_CALL_KEY:?required}
+      CONCIERGE_APPROVAL_KEY: ${CONCIERGE_APPROVAL_KEY:?required}
       CONCIERGE_URL: ${CONCIERGE_URL:?Set deployed Concierge invoke URL}
       CONCIERGE_API_KEY: ${CONCIERGE_API_KEY:?Set gateway API key}
-      DEMO_SESSION_TOKEN: ${DEMO_SESSION_TOKEN:-local-demo-session}
+      DEMO_ACCESS_CODE: ${DEMO_ACCESS_CODE:?required}
+      DEMO_RESET_CODE: ${DEMO_RESET_CODE:?required}
+      DEMO_SESSION_SIGNING_KEY: ${DEMO_SESSION_SIGNING_KEY:?required}
+      DEMO_SECURE_COOKIE: ${DEMO_SECURE_COOKIE:-false}
       WSO2_MODE: 'true'
     depends_on: {core: {condition: service_healthy}}
-    ports: ['8300:8300']
+    ports: ['127.0.0.1:8300:8300']
 volumes: {aurora_db: {}}

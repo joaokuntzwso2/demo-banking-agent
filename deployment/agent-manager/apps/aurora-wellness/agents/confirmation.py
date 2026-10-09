@@ -16,10 +16,10 @@ def money(value, language='en'):
 
 def parse_brl_amount(message):
     """Parse BRL amounts, not unspecified numbers (IDs, dates, card digits)."""
-    m = re.search(r'(?:R\s*\$|BRL)\s*([0-9][0-9.,]*)', message, re.I)
-    if not m:
-        return None
-    raw = m.group(1).rstrip(',.')
+    matches = re.findall(r'(?:R\s*\$|BRL)\s*([0-9][0-9.,]*)', message, re.I)
+    if not matches or len(set(matches)) > 1:
+        return None  # Multiple amounts require clarification; never guess which is the Pix.
+    raw = matches[0].rstrip(',.')
     if '.' in raw and ',' in raw:
         decimal_separator = '.' if raw.rfind('.') > raw.rfind(',') else ','
         thousands_separator = ',' if decimal_separator == '.' else '.'

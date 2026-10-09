@@ -2,7 +2,9 @@
 import os,httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from banking_common.config import CORE_URL,INTERNAL_KEY
+from banking_common.config import CORE_URL
+from banking_common.security import secret
+from banking_common.telemetry import outbound_headers,wrap_asgi
 # MCP Python SDK protects against DNS rebinding. Explicitly allow the Docker
 # Compose service name so that http://mcp:8101/mcp is not rejected with HTTP 421.
 # On-prem: set MCP_ALLOWED_HOSTS to the actual internal upstream host(s).
@@ -21,7 +23,7 @@ mcp=FastMCP(
 )
 async def core(method,path,payload=None):
     async with httpx.AsyncClient(timeout=20) as c:
-        r=await c.request(method,CORE_URL+path,headers={'X-Internal-Key':INTERNAL_KEY},json=payload)
+        r=await c.request(method,CORE_URL+path,headers={'X-Internal-Key':secret('BANK_CORE_READ_KEY' if method=='GET' else 'BANK_CORE_WRITE_KEY'),**outbound_headers()},json=payload)
         r.raise_for_status();return r.json()
 @mcp.tool()
 async def get_banking_snapshot(customer_id:str='C001')->dict:
@@ -51,4 +53,4 @@ async def request_pix(customer_id:str,beneficiary_id:str,amount:str)->dict:
 async def execute_approved_pix(customer_id:str,beneficiary_id:str,amount:str,approval_id:str,idempotency_key:str)->dict:
     """Execute simulated Pix exactly once after approved immutable details."""
     return await core('POST','/pix',{'customer_id':customer_id,'beneficiary_id':beneficiary_id,'amount':amount,'approval_id':approval_id,'idempotency_key':idempotency_key})
-app=mcp.streamable_http_app()
+app=wrap_asgi(mcp.streamable_http_app())

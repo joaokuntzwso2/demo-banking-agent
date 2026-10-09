@@ -51,6 +51,7 @@ printf '\n>>> Concierge-to-specialist read\n'
 curl --fail-with-body --show-error --silent --connect-timeout 4 --max-time 90 \
   'http://localhost:8200/chat' \
   -H 'Content-Type: application/json' \
+  -H "X-Agent-Call-Key: ${CONCIERGE_CALL_KEY:-local-demo-concierge-call}" \
   --data '{"customer_id":"C001","message":"What is my account balance?","language":"en"}' \
   | python3 -c '
 import json,sys
@@ -66,4 +67,4 @@ curl --fail-with-body --show-error --silent --output /dev/null \
   --write-out 'Portal HTTP status: %{http_code}\n' \
   --connect-timeout 4 --max-time 20 'http://localhost:8300/'
 
-printf '\nSUCCESS: All read-only smoke checks passed. Open http://localhost:8300\n'
+printf '\nSUCCESS: All read-only smoke checks passed. Open http://localhost:8300, then sign in using DEMO_ACCESS_CODE.\n'

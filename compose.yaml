@@ -1,19 +1,40 @@
 services:
   db:
     image: postgres:16-alpine
-    environment: {POSTGRES_USER: aurora, POSTGRES_PASSWORD: aurora_demo, POSTGRES_DB: aurora}
-    volumes: [aurora_db:/var/lib/postgresql/data]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aurora"], interval: 5s, retries: 15}
+    environment:
+      POSTGRES_USER: aurora
+      POSTGRES_PASSWORD: aurora_demo
+      POSTGRES_DB: aurora
+    volumes:
+    - aurora_db:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U aurora
+      interval: 5s
+      retries: 15
   core:
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg://aurora:aurora_demo@db:5432/aurora
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       ENABLE_DEMO_RESET: 'true'
-    depends_on: {db: {condition: service_healthy}}
-    ports: ["8100:8100"]
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:-local-demo-write-mcp}
+      BANK_APPROVAL_KEY: ${BANK_APPROVAL_KEY:-local-demo-approval-core}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:-local-demo-reset-capability}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+    - 127.0.0.1:8100:8100
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3).read()"]
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health',
+        timeout=3).read()
       interval: 5s
       timeout: 4s
       retries: 15
@@ -23,109 +44,157 @@ services:
     command: uvicorn mcp_server.app:app --host 0.0.0.0 --port 8101
     environment:
       BANK_CORE_URL: http://core:8100
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp:*,localhost:*,127.0.0.1:*}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:-local-demo-write-mcp}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
     depends_on:
-      core: {condition: service_healthy}
-    ports: ["8101:8101"]
-  account: &agent
+      core:
+        condition: service_healthy
+    ports:
+    - 127.0.0.1:8101:8101
+  account:
     build: .
     command: uvicorn agents.specialists:app --host 0.0.0.0 --port 8200
     environment:
       AGENT_ROLE: account
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-    depends_on: [mcp]
-    ports: ["8201:8200"]
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: &id001
+    - mcp
+    ports:
+    - 127.0.0.1:8201:8200
   card:
-    <<: *agent
+    build: .
+    command: uvicorn agents.specialists:app --host 0.0.0.0 --port 8200
     environment:
       AGENT_ROLE: card
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-    ports: ["8202:8200"]
+      SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: *id001
+    ports:
+    - 127.0.0.1:8202:8200
   dispute:
-    <<: *agent
+    build: .
+    command: uvicorn agents.specialists:app --host 0.0.0.0 --port 8200
     environment:
       AGENT_ROLE: dispute
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-    ports: ["8203:8200"]
+      SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: *id001
+    ports:
+    - 127.0.0.1:8203:8200
   pix:
-    <<: *agent
+    build: .
+    command: uvicorn agents.specialists:app --host 0.0.0.0 --port 8200
     environment:
       AGENT_ROLE: pix
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-    ports: ["8204:8200"]
+      SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: *id001
+    ports:
+    - 127.0.0.1:8204:8200
   wellness:
-    <<: *agent
+    build: .
+    command: uvicorn agents.specialists:app --host 0.0.0.0 --port 8200
     environment:
       AGENT_ROLE: wellness
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-    ports: ["8205:8200"]
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+    depends_on: *id001
+    ports:
+    - 127.0.0.1:8205:8200
   concierge:
     build: .
     command: uvicorn agents.concierge:app --host 0.0.0.0 --port 8200
     environment:
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_URL: ${OPENAI_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
-      AGENT_ACCOUNT_URL: ${AGENT_ACCOUNT_URL:-http://account:8200}
+      AGENT_ACCOUNT_URL: http://account:8200
       AGENT_ACCOUNT_API_KEY: ${AGENT_ACCOUNT_API_KEY:-}
-      AGENT_CARD_URL: ${AGENT_CARD_URL:-http://card:8200}
+      AGENT_CARD_URL: http://card:8200
       AGENT_CARD_API_KEY: ${AGENT_CARD_API_KEY:-}
-      AGENT_DISPUTE_URL: ${AGENT_DISPUTE_URL:-http://dispute:8200}
+      AGENT_DISPUTE_URL: http://dispute:8200
       AGENT_DISPUTE_API_KEY: ${AGENT_DISPUTE_API_KEY:-}
-      AGENT_PIX_URL: ${AGENT_PIX_URL:-http://pix:8200}
+      AGENT_PIX_URL: http://pix:8200
       AGENT_PIX_API_KEY: ${AGENT_PIX_API_KEY:-}
-      AGENT_WELLNESS_URL: ${AGENT_WELLNESS_URL:-http://wellness:8200}
+      AGENT_WELLNESS_URL: http://wellness:8200
       AGENT_WELLNESS_API_KEY: ${AGENT_WELLNESS_API_KEY:-}
       BANK_CORE_URL: http://core:8100
       WSO2_MODE: ${WSO2_MODE:-false}
-    depends_on: [account,card,dispute,pix,wellness]
-    ports: ["8200:8200"]
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
+      BANK_APPROVAL_KEY: ${BANK_APPROVAL_KEY:-local-demo-approval-core}
+      SPECIALIST_EXECUTION_KEY: ${SPECIALIST_EXECUTION_KEY:-local-demo-specialist-execute}
+      CONCIERGE_APPROVAL_KEY: ${CONCIERGE_APPROVAL_KEY:-local-demo-concierge-approval}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+      CONCIERGE_CALL_KEY: ${CONCIERGE_CALL_KEY:-local-demo-concierge-call}
+      SPECIALIST_CALL_KEY: ${SPECIALIST_CALL_KEY:-local-demo-specialist-call}
+    depends_on:
+    - account
+    - card
+    - dispute
+    - pix
+    - wellness
+    ports:
+    - 127.0.0.1:8200:8200
   portal:
     build: .
     command: uvicorn demo_portal.app:app --host 0.0.0.0 --port 8300
     environment:
       BANK_CORE_URL: http://core:8100
-      BANK_INTERNAL_KEY: ${BANK_INTERNAL_KEY:-local-demo-internal-key}
       MCP_SERVER_URL: http://mcp:8101/mcp
       MCP_BEARER_TOKEN: ''
-      CONCIERGE_URL: ${CONCIERGE_URL:-http://concierge:8200}
+      CONCIERGE_URL: http://concierge:8200
       CONCIERGE_API_KEY: ${CONCIERGE_API_KEY:-}
       WSO2_MODE: ${WSO2_MODE:-false}
-      DEMO_SESSION_TOKEN: ${DEMO_SESSION_TOKEN:-local-demo-session}
-    depends_on: [concierge]
-    ports: ["8300:8300"]
-volumes: {aurora_db: {}}
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:-local-demo-read-only}
+      CONCIERGE_APPROVAL_KEY: ${CONCIERGE_APPROVAL_KEY:-local-demo-concierge-approval}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:-local-demo-reset-capability}
+      DEMO_ACCESS_CODE: ${DEMO_ACCESS_CODE:-aurora-local-demo-only}
+      DEMO_SESSION_SIGNING_KEY: ${DEMO_SESSION_SIGNING_KEY:-local-development-cookie-key-not-for-public-deployment}
+      DEMO_RESET_CODE: ${DEMO_RESET_CODE:-local-presenter-reset}
+      DEMO_SECURE_COOKIE: ${DEMO_SECURE_COOKIE:-false}
+      AURORA_ENABLE_OTEL: ${AURORA_ENABLE_OTEL:-false}
+      CONCIERGE_CALL_KEY: ${CONCIERGE_CALL_KEY:-local-demo-concierge-call}
+    depends_on:
+    - concierge
+    ports:
+    - 127.0.0.1:8300:8300
+volumes:
+  aurora_db: {}

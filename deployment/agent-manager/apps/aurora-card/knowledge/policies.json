@@ -1,6 +1,398 @@
 [
- {"id":"POL-DIS-001","version":"1.0","topic":"dispute","language":"en","text":"A customer may report an unrecognized card transaction. A reported claim is investigated and initially marked under review. Blocking the card is a separate action and requires explicit customer approval. Submitting a dispute does not guarantee a provisional credit, a refund, a decision timeframe, or a successful outcome."},
- {"id":"POL-DIS-001","version":"1.0","topic":"dispute","language":"es","text":"El cliente puede reclamar una transacción no reconocida en su tarjeta. El caso se investiga y se registra inicialmente como en revisión. El bloqueo de la tarjeta es una operación independiente y requiere autorización explícita. La reclamación no garantiza un crédito provisional, un reembolso, un plazo de resolución ni una decisión favorable."},
- {"id":"POL-FIN-001","version":"1.0","topic":"wellness","language":"en","text":"A basic cash-flow projection subtracts known future obligations from the available checking balance. Credit card purchases are not automatically debits to the checking account. Projections omit unknown income, future spending, changing commitments and new card payments. This information is educational, not financial advice."},
- {"id":"POL-FIN-001","version":"1.0","topic":"wellness","language":"es","text":"La proyección básica de caja resta las obligaciones futuras conocidas del saldo disponible de la cuenta corriente. Las compras con tarjeta no se debitan automáticamente de la cuenta corriente. Las proyecciones no consideran ingresos desconocidos, nuevos gastos ni variaciones futuras. La información es educativa y no constituye asesoramiento financiero."}
+  {
+    "id": "POL-DIS-001",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "text": "A customer may report an unrecognized card transaction. A reported claim is investigated and initially marked under review. Blocking the card is a separate action and requires explicit customer approval. Submitting a dispute does not guarantee a provisional credit, a refund, a decision timeframe, or a successful outcome.",
+    "effective": "2026-01-01",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-001",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "text": "El cliente puede reclamar una transacción no reconocida en su tarjeta. El caso se investiga y se registra inicialmente como en revisión. El bloqueo de la tarjeta es una operación independiente y requiere autorización explícita. La reclamación no garantiza un crédito provisional, un reembolso, un plazo de resolución ni una decisión favorable.",
+    "effective": "2026-01-01",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-001",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "text": "A basic cash-flow projection subtracts known future obligations from the available checking balance. Credit card purchases are not automatically debits to the checking account. Projections omit unknown income, future spending, changing commitments and new card payments. This information is educational, not financial advice.",
+    "effective": "2026-01-01",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-001",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "text": "La proyección básica de caja resta las obligaciones futuras conocidas del saldo disponible de la cuenta corriente. Las compras con tarjeta no se debitan automáticamente de la cuenta corriente. Las proyecciones no consideran ingresos desconocidos, nuevos gastos ni variaciones futuras. La información es educativa y no constituye asesoramiento financiero.",
+    "effective": "2026-01-01",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Eligibility",
+    "text": "Only posted card transactions may be disputed. The customer must identify the transaction unambiguously.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-002",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Eligibility",
+    "text": "Solo se pueden reclamar operaciones con tarjeta contabilizadas. El cliente debe identificar la transacción sin ambigüedad.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-003",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Case review",
+    "text": "A new case starts under_review and can be investigated. The simulator does not provide refunds or estimated resolution dates.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-003",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Case review",
+    "text": "Cada caso empieza en revisión. El simulador no realiza reembolsos ni promete fechas de resolución.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-004",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Evidence",
+    "text": "Merchant name, amount, timestamp and transaction identifier support investigation. Do not request real card credentials.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-004",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Evidence",
+    "text": "Comercio, importe, fecha e identificador ayudan en la investigación. Nunca se solicitan credenciales reales.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-005",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Duplicated claims",
+    "text": "The bank does not open a second active dispute for the same transaction. Refer to the existing case.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-005",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Duplicated claims",
+    "text": "El banco no abre dos reclamaciones para una misma operación. Se debe consultar el caso existente.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-006",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Card security",
+    "text": "A reported card fraud concern is distinct from ordering a card block. Blocking always needs explicit customer approval.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-006",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Card security",
+    "text": "Reportar un fraude no equivale a bloquear la tarjeta. Siempre es necesaria autorización explícita.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-007",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Data retention",
+    "text": "Store synthetic dispute identifiers and a concise audit history; never expose full payment credentials.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-007",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Data retention",
+    "text": "Se registran identificadores ficticios y auditorías breves; no se muestran credenciales completas.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-008",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Merchant verification",
+    "text": "Do not guess a merchant when more than one card charge could match the description. Ask a clarifying question.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-008",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Merchant verification",
+    "text": "No se debe adivinar el comercio si más de un cargo coincide. Solicita una aclaración.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-009",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Customer communication",
+    "text": "Keep card status, dispute status and payment status as separate records and separate statements.",
+    "fictional": true
+  },
+  {
+    "id": "POL-DIS-009",
+    "version": "1.0",
+    "topic": "dispute",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Customer communication",
+    "text": "El estado de la tarjeta, la reclamación y los pagos son registros y comunicaciones distintos.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-002",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Committed expenses",
+    "text": "Only obligations due today or in the future belong to the upcoming-expenses subtotal.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-002",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Committed expenses",
+    "text": "Solo los compromisos con fecha de hoy o futura se incluyen en el subtotal de próximos gastos.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-003",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Pix cash impact",
+    "text": "An approved and completed Pix decreases the checking balance immediately in the simulator.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-003",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Pix cash impact",
+    "text": "Un Pix aprobado y completado disminuye inmediatamente el saldo de la cuenta en el simulador.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-004",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Credit card cash impact",
+    "text": "Card purchases and checking-account debits are separate accounting events; card purchases do not instantly reduce checking.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-004",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Credit card cash impact",
+    "text": "Las compras con tarjeta y los débitos de cuenta son eventos contables distintos.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-005",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Planning uncertainty",
+    "text": "Projected cash excludes unknown recurring expenses, future income and discretionary spending.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-005",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Planning uncertainty",
+    "text": "Las proyecciones no incluyen ingresos ni gastos futuros desconocidos.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-006",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Overdraft warning",
+    "text": "If upcoming obligations exceed available funds, warn about the deficit without offering regulated financial advice.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-006",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Overdraft warning",
+    "text": "Si las obligaciones superan el saldo disponible, advierte del déficit sin dar asesoramiento financiero.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-007",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Beneficiary verification",
+    "text": "Only verified, explicitly selected Pix beneficiaries may receive a payment.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-007",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Beneficiary verification",
+    "text": "Solo los beneficiarios Pix verificados y elegidos expresamente pueden recibir pagos.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-008",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Payment limits",
+    "text": "The fictional simulator enforces a R$2,500 Pix ceiling per simulated payment.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-008",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Payment limits",
+    "text": "El simulador ficticio limita cada pago Pix a R$2.500.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-009",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Idempotent banking",
+    "text": "A payment authorization maps to a single idempotency identifier and a single debit.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-009",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Idempotent banking",
+    "text": "Cada autorización corresponde a un identificador de idempotencia y un único débito.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-010",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Non-guaranteed outcomes",
+    "text": "Budgets are educational and must not promise interest rates, investment returns, or credit approval.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-010",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Non-guaranteed outcomes",
+    "text": "Los presupuestos son educativos; no se prometen rendimientos ni aprobación de crédito.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-011",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "en",
+    "effective": "2026-01-01",
+    "title": "Calendar obligations",
+    "text": "An obligation due date is attached to each bill; the forecast ignores past-due dates for future-expense totals.",
+    "fictional": true
+  },
+  {
+    "id": "POL-FIN-011",
+    "version": "1.0",
+    "topic": "wellness",
+    "language": "es",
+    "effective": "2026-01-01",
+    "title": "Calendar obligations",
+    "text": "Cada compromiso tiene vencimiento, y los vencidos no se consideran gastos futuros.",
+    "fictional": true
+  }
 ]

@@ -3,11 +3,12 @@
 import json,os,sys,urllib.request,urllib.error
 base=os.getenv('CONCIERGE_URL','').rstrip('/')
 key=os.getenv('CONCIERGE_API_KEY','')
-if not base or not key:
-    sys.exit('Set CONCIERGE_URL and CONCIERGE_API_KEY (backend-side only)')
+call_key=os.getenv('CONCIERGE_CALL_KEY','')
+if not base or not key or not call_key:
+    sys.exit('Set CONCIERGE_URL, CONCIERGE_API_KEY and CONCIERGE_CALL_KEY (backend only)')
 req=urllib.request.Request(base+'/chat',data=json.dumps({
     'customer_id':'C001','language':'en','message':'What is my checking account balance?'}).encode(),
-    headers={'Content-Type':'application/json','X-API-Key':key},method='POST')
+    headers={'Content-Type':'application/json','X-API-Key':key,'X-Agent-Call-Key':call_key},method='POST')
 try:
     with urllib.request.urlopen(req,timeout=60) as r: data=json.load(r)
 except urllib.error.HTTPError as exc:

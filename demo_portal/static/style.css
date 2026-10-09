@@ -3,3 +3,30 @@
 /* Keep each independently approved banking operation visible until decided. */
 #actions .approval-choice{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
 #actions .approval-choice button{flex:1;min-width:120px}
+
+/* Executive-demo enhancements: receipt, approval review, agent execution and login */
+.login-overlay:not([hidden]){display:grid;place-items:center;position:fixed;inset:0;background:linear-gradient(125deg,#061a2aee,#0b3b48ee);z-index:90;padding:24px}
+.login-overlay[hidden],[hidden]{display:none!important}
+.login-card{background:white;border-radius:22px;box-shadow:0 25px 100px #00192b55;max-width:420px;width:100%;padding:40px;display:grid;gap:18px}
+.login-card h2{font:800 28px Manrope;margin:0}.login-card p{color:#667d8b;font-size:13px;line-height:1.65;margin:0}
+.login-card label{font-size:12px;font-weight:700}.login-card input{border:1px solid #cbdde3;padding:14px;border-radius:12px;width:100%;font:inherit}
+.login-card small{color:#ac3535;min-height:12px}
+.receipt{background:#e6faf1;border:1px solid #b3e4d4;padding:18px;border-radius:12px;margin-top:20px;font-size:12px;color:#116251;line-height:1.6;font-weight:700}
+#execution{display:flex;align-items:flex-start;gap:9px;flex-wrap:wrap}
+#execution strong{width:100%;font-size:13px}#execution small{width:100%;color:#8396a3;font-size:10px}
+.role-chip{font-size:9px;font-weight:800;letter-spacing:.6px;border:1px solid #b3dfd8;color:#087a6e;background:#ecfaf7;border-radius:30px;padding:6px 9px}
+#actions .approval-choice{width:100%;padding:13px;background:#effaf7;border:1px solid #c8ede4;border-radius:11px}
+.approval-summary{width:100%;display:flex;flex-direction:column;gap:6px;font-size:11px}.approval-summary small{color:#617d86}
+
+/* Purpose-built bank views for a customer-experience presentation */
+.bank-card-detail{display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:center;padding:24px 0;border-bottom:1px solid #edf2f4}
+.bank-card-image{height:132px;border-radius:16px;padding:20px;color:white;background:linear-gradient(135deg,#092a45,#0b8181 75%,#32c6b4);display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 12px 26px #073e4b23;letter-spacing:2px}
+.bank-card-image strong{font-size:13px}.bank-card-image span{font-weight:800;font-size:18px}.bank-card-info h3{margin:0 0 10px;font:800 17px Manrope}.pill-status{display:inline-block;background:#e7f9f4;color:#07705d;border-radius:30px;padding:6px 11px;font-size:11px;font-weight:800}.pill-status.blocked{background:#fff0ee;color:#b83f32}
+.bank-card-info p,.case-panel p{line-height:1.65;font-size:12px;color:#65798b}.bank-card-info p{max-width:420px}
+.subsection-title{font:800 14px Manrope;margin:20px 0}.payment-receipt,.case-panel,.financial-summary{border:1px solid #deedf0;border-radius:14px;padding:22px;margin:15px 0;background:linear-gradient(135deg,#f5fcfa,white)}
+.receipt-icon{display:grid;place-items:center;width:33px;height:33px;border-radius:50%;background:#c8f3e5;color:#067966;margin-bottom:8px;font-weight:900}.payment-receipt strong{display:block;font:800 24px Manrope}.payment-receipt p{margin:6px 0}.payment-receipt small{display:block;color:#8596a2;margin:4px 0}
+.case-panel h3{font:800 18px Manrope;margin:10px 0}.case-panel small{color:#7b8d99;font-size:11px}.case-stages{display:flex;gap:6px;margin:22px 0}.case-stages span{flex:1;border-top:4px solid #d7e0e6;padding-top:10px;color:#a1b2bd;font-size:10px}.case-stages span.done{border-color:#0db5a2;color:#236e67;font-weight:800}
+.financial-summary strong{font:800 30px Manrope;display:block;margin:8px 0}.financial-summary small{color:#7d8c9a}
+.obligation-item{padding:15px 0;border-bottom:1px solid #edf2f5;display:grid;grid-template-columns:1fr auto;gap:12px;font-size:12px}.obligation-item span{color:#758898}.bar-track{grid-column:1/-1;height:7px;background:#eaf0f3;border-radius:8px;overflow:hidden}.bar-fill{height:100%;background:#17aa9b;border-radius:8px}
+.empty-note{color:#8fa3b0;font-size:12px;padding:18px}
+@media(max-width:650px){.bank-card-detail{grid-template-columns:1fr}.bank-card-image{max-width:260px}}

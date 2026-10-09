@@ -1,13 +1,15 @@
 import os, json, httpx, asyncio, time
 from pydantic import BaseModel,Field
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,Header
 from banking_common.config import MCP_URL,MCP_TOKEN
+from banking_common.telemetry import install_telemetry,outbound_headers
+from banking_common.security import require_secret
 from mcp.client.streamable_http import streamable_http_client
 from mcp import ClientSession
 from pathlib import Path
 
 class ChatRequest(BaseModel):
-    message:str;customer_id:str='C001';language:str='en';history:list[dict]=Field(default_factory=list)
+    message:str;customer_id:str='C001';language:str='en';history:list[dict]=Field(default_factory=list);workflow_id:str|None=None
 class AgentResponse(BaseModel):
     agent:str;message:str;data:dict=Field(default_factory=dict);next_actions:list[dict]=Field(default_factory=list)
 
@@ -73,7 +75,7 @@ async def mcp_tool(name,arguments):
     # MCP Python SDK 1.25+ accepts a preconfigured httpx.AsyncClient here.
     # Do not pass headers= or timeout= to streamable_http_client(): those
     # arguments were removed from this function (the SDK still yields 3 items).
-    headers = await _mcp_headers()
+    headers = {**await _mcp_headers(), **outbound_headers()}
     timeout = httpx.Timeout(30.0, read=300.0)
     async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
         async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
@@ -116,8 +118,11 @@ def retrieve(topic,lang,query=''):
 
 def application(name,fn):
     app=FastAPI(title='Aurora '+name+' Agent')
+    install_telemetry(app,name)
     @app.get('/health')
     async def health():return {'status':'ok','agent':name}
     @app.post('/chat',response_model=AgentResponse)
-    async def chat(req:ChatRequest):return await fn(req)
+    async def chat(req:ChatRequest,x_agent_call_key:str|None=Header(None)):
+        require_secret(x_agent_call_key,'CONCIERGE_CALL_KEY' if name=='concierge' else 'SPECIALIST_CALL_KEY')
+        return await fn(req)
     return app

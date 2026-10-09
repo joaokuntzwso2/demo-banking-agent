@@ -1,182 +1,218 @@
-import os,re,asyncio,httpx,hmac
-from fastapi import Header, HTTPException
-from pydantic import BaseModel, Field
-from banking_common.config import INTERNAL_KEY, CORE_URL
-from .confirmation import confirmed, response as confirmation_response
+"""Customer-facing orchestrator. No banking mutations without explicit approval.
+
+Graph: understand -> plan -> parallel independent specialists -> compose.
+Approvals are persisted with the workflow and executed ONLY by their specialist;
+commit acknowledgement is recovered via a same-approval idempotent retry.
+"""
+import os,asyncio,json,httpx,uuid
 from typing import TypedDict
+from fastapi import Header,HTTPException
+from pydantic import BaseModel,Field
 from langgraph.graph import StateGraph,START,END
-from fastapi import FastAPI
+from banking_common.config import CORE_URL
+from banking_common.security import require_secret,secret
+from banking_common.telemetry import outbound_headers
+from .intents import action_intent
+from .confirmation import confirmed,response as confirmation_response
 from .common import *
-ROLE_URLS={role:os.getenv('AGENT_'+role.upper()+'_URL',f'http://localhost:{port}') for role,port in [('account',8201),('card',8202),('dispute',8203),('pix',8204),('wellness',8205)]}
-def _agent_gateway_headers(role):
+
+ROLE_URLS={role:os.getenv('AGENT_'+role.upper()+'_URL',f'http://localhost:{port}')
+           for role,port in [('account',8201),('card',8202),('dispute',8203),('pix',8204),('wellness',8205)]}
+KEYWORDS={'account':['account','balance','cuenta','saldo','transaction','transacci'],
+          'card':['card','tarjeta','fraud','fraude','block','bloque','unrecognized','desconoc'],
+          'dispute':['dispute','reclamo','reclamaci','charge','cargo','fraud','fraude','recognize','reconozco'],
+          'pix':['pix','transfer','pagar','pay ','payment','pago'],
+          'wellness':['budget','expenses','gastos','future','enough','suficiente','money','dinero','obligacion','remaining']}
+
+def gateway_headers(role):
     key=os.getenv('AGENT_'+role.upper()+'_API_KEY','')
     if os.getenv('WSO2_MODE','false').lower()=='true' and not key:
-        raise RuntimeError(f'Missing gateway credential for {role}')
-    return {'X-API-Key':key} if key else {}
-
-KEYWORDS={'account' :['account','balance','cuenta','saldo','transaction','transacci'], 'card':['card','tarjeta','fraud','fraude','block','bloque','unrecognized','desconoc'], 'dispute':['dispute','reclamo','charge','cargo','fraud','fraude','recognize','reconozco','desconoc'], 'pix':['pix','transfer','pagar','pay ','payment','pago'], 'wellness':['budget','expenses','gastos','future','enough','suficiente','money','dinero','obligacion','remaining']}
+        raise RuntimeError(f'Missing Agent Manager gateway credential for {role}')
+    return {**({'X-API-Key':key} if key else {}),'X-Agent-Call-Key':secret('SPECIALIST_CALL_KEY'),**outbound_headers()}
 
 def heuristic(message):
-    t=message.lower();hits=[k for k,terms in KEYWORDS.items() if any(x in t for x in terms)]
+    t=message.casefold();hits=[k for k,v in KEYWORDS.items() if any(w in t for w in v)]
     return hits or ['account']
+
 async def plan(message):
-    prompt="Choose banking specialists for this request. Return ONLY a JSON array using role names account, card, dispute, pix, wellness. Select all necessary; never call external tools or authorize payment."
+    guidance=('Return ONLY a JSON list of banking specialist roles: account,card,dispute,pix,wellness. '
+              'Select specialists relevant to the question, even if informational. '
+              'You may suggest roles but you do NOT authorize financial operations.')
     try:
-        raw=await llm(prompt,message)
-        if raw:
-            import json
-            parsed=json.loads(raw)
-            if isinstance(parsed,list):
-                valid=[x for x in parsed if x in ROLE_URLS]
-                if valid:return list(dict.fromkeys(valid))
+        raw=await llm(guidance,message)
+        parsed=json.loads(raw) if raw else None
+        if isinstance(parsed,list):
+            roles=[r for r in parsed if r in ROLE_URLS]
+            if roles:return list(dict.fromkeys(roles))
     except Exception:pass
     return heuristic(message)
-class OrchestrationState(TypedDict):
-    request: dict
-    roles: list[str]
-    results: list[dict]
 
-async def select_specialists(state:OrchestrationState):
-    message = state['request']['message']
-    roles = await plan(message)
-    # Post-Pix balances and cash flow are deferred until AFTER approval and
-    # actual execution, when the Concierge re-queries the banking agents.
-    if 'pix' in roles and any(x in message.casefold() for x in ('then', 'después', 'luego', 'after', 'remaining balance', 'saldo restante')):
-        roles = [role for role in roles if role not in ('account', 'wellness')]
-    return {'roles': roles}
+class GraphState(TypedDict,total=False):
+    request:dict
+    language:str
+    roles:list[str]
+    results:list[dict]
+    steps:list[dict]
 
-async def invoke_specialists(state:OrchestrationState):
-    r=ChatRequest(**state['request'])
-    lang=choose_language(r.message,r.language)
+async def interpret_node(state:GraphState):
+    r=state['request'];lang=choose_language(r['message'],r.get('language','en'))
+    return {'language':lang,'steps':[{'stage':'understand','status':'completed'}]}
+async def plan_node(state:GraphState):
+    roles=await plan(state['request']['message'])
+    msg=state['request']['message'].casefold()
+    # After a requested Pix payment we must read back fresh account/wellness
+    # state following the approved commit rather than present stale estimates.
+    if 'pix' in roles and any(w in msg for w in ('then','después','luego','after','remaining','restante')):
+        roles=[r for r in roles if r not in ('account','wellness')]
+    return {'roles':roles,'steps':state['steps']+[{'stage':'plan','status':'completed','roles':roles}]}
+async def invoke_roles(request,roles,lang):
     async with httpx.AsyncClient(timeout=50) as client:
-        async def invoke(role):
+        async def one(role):
             try:
-                res=await client.post(ROLE_URLS[role].rstrip('/')+'/chat',json={**r.model_dump(),'language':lang},headers=_agent_gateway_headers(role))
-                res.raise_for_status();return res.json()
+                response=await client.post(ROLE_URLS[role].rstrip('/')+'/chat',
+                    headers=gateway_headers(role),json={**request,'language':lang})
+                response.raise_for_status();return response.json()
             except Exception as e:
-                return {'agent':role,'message':('Service temporarily unavailable.' if lang=='en' else 'Servicio temporalmente no disponible.'),'data':{'error_type':type(e).__name__},'next_actions':[]}
-        return {'results':await asyncio.gather(*(invoke(role) for role in state['roles']))}
+                return {'agent':role,'message':('Service temporarily unavailable.' if lang=='en' else
+                     'Servicio temporalmente no disponible.'),'data':{'error_type':type(e).__name__},'next_actions':[]}
+        return await asyncio.gather(*(one(role) for role in roles))
+async def invoke_node(state:GraphState):
+    results=await invoke_roles(state['request'],state['roles'],state['language'])
+    steps=[{'stage':'specialist','role':r,'status':'completed' if 'error_type' not in o.get('data',{}) else 'unavailable'}
+           for r,o in zip(state['roles'],results)]
+    return {'results':results,'steps':state['steps']+steps}
+async def compose_node(state:GraphState):
+    return {'steps':state['steps']+[{'stage':'compose','status':'completed'}]}
 
-graph=StateGraph(OrchestrationState)
-graph.add_node('select',select_specialists)
-graph.add_node('invoke',invoke_specialists)
-graph.add_edge(START,'select');graph.add_edge('select','invoke');graph.add_edge('invoke',END)
-workflow=graph.compile()
+builder=StateGraph(GraphState)
+for node,fn in [('understand',interpret_node),('plan',plan_node),('invoke',invoke_node),('compose',compose_node)]:
+    builder.add_node(node,fn)
+builder.add_edge(START,'understand');builder.add_edge('understand','plan')
+builder.add_conditional_edges('plan',lambda st:'invoke' if st.get('roles') else 'compose',{'invoke':'invoke','compose':'compose'})
+builder.add_edge('invoke','compose');builder.add_edge('compose',END)
+workflow=builder.compile()
 
-async def concierge(r):
-    state=await workflow.ainvoke({'request':r.model_dump(),'roles':[],'results':[]})
-    lang=choose_language(r.message,r.language)
-    results=state['results']
-    actions=[a for p in results for a in p.get('next_actions',[])]
-    return AgentResponse(agent='concierge',message='\n\n'.join(p['message'] for p in results),data={'language':lang,'invoked_agents':state['roles'],'specialists':results},next_actions=actions)
+async def core(method,path,payload=None,capability='BANK_APPROVAL_KEY'):
+    async with httpx.AsyncClient(timeout=25) as client:
+        result=await client.request(method,CORE_URL+path,json=payload,
+            headers={'X-Internal-Key':secret(capability),**outbound_headers()})
+        result.raise_for_status();return result.json()
+
+async def concierge(r:ChatRequest):
+    workflow_id=r.workflow_id or uuid.uuid4().hex
+    old={}
+    try:old=(await core('GET',f'/workflows/{workflow_id}?customer_id={r.customer_id}'))['state']
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code!=404:raise
+    original=r.message
+    clarification=old.get('clarification')
+    # A clarification response resumes the previously authorized *intent*,
+    # but it never approves an operation or bypasses specialist validation.
+    # Explicit cancellation or a new command starts a fresh plan.
+    lower=original.strip().casefold()
+    if clarification and not lower.startswith(('no','cancel','cancela','stop','alto')):
+        new_command=any(action_intent(original,a).action for a in ('block_card','open_dispute','execute_pix'))
+        if not new_command and not lower.startswith(('how','what','why','cómo','qué','que','explain','explica')):
+            r=r.model_copy(update={'message':clarification['request']+'; '+original})
+    state=await workflow.ainvoke({'request':r.model_dump(),'steps':[]})
+    lang=state['language'];results=state.get('results',[])
+    approvals=[a for result in results for a in result.get('next_actions',[])]
+    pending={a['approval_id']:a for a in old.get('pending',[])}
+    for action in approvals:pending[action['approval_id']]=action
+    waiting=None
+    for role,result in zip(state.get('roles',[]),results):
+        corresponding={'card':'block_card','dispute':'open_dispute','pix':'execute_pix'}.get(role)
+        if corresponding and action_intent(r.message,corresponding).action and not result.get('next_actions'):
+            waiting={'role':role,'request':r.message}
+            break
+    progress={'language':lang,'pending':list(pending.values()),'completed':old.get('completed',[]),
+              'steps':state['steps'],'last_message':r.message,'roles':state.get('roles',[]),
+              'clarification':waiting}
+    await core('POST','/workflows/'+workflow_id,{'customer_id':r.customer_id,'state':progress})
+    return AgentResponse(agent='concierge',message='\n\n'.join(result['message'] for result in results),
+        data={'language':lang,'invoked_agents':state.get('roles',[]),'specialists':results,
+              'workflow_id':workflow_id,'steps':state['steps'],'awaiting_clarification':bool(waiting)},
+        next_actions=approvals)
+
 app=application('concierge',concierge)
-
-# The BFF invokes this protected callback only AFTER a specialist has executed a
-# previously approved mutation.  The Concierge re-queries agents for up-to-date
-# read models; it never invents a post-payment balance from an LLM response.
-class PostActionRequest(BaseModel):
-    customer_id: str = 'C001'
-    language: str = 'en'
-    original_request: str = ''
-    action: str
-    outcome: dict = Field(default_factory=dict)
-
-
-@app.post('/post-action', response_model=AgentResponse)
-async def post_action(req: PostActionRequest, x_internal_key: str | None = Header(None)):
-    if not hmac.compare_digest(x_internal_key or '', INTERNAL_KEY):
-        raise HTTPException(401, 'Service authentication required')
-    if not confirmed(req.action, req.outcome):
-        raise HTTPException(422, 'Successful specialist execution is required')
-
-    lang = 'es' if req.language == 'es' else 'en'
-    roles = {
-        'execute_pix': ['account', 'wellness'],
-        'block_card': ['card'],
-        'open_dispute': ['dispute'],
-    }[req.action]
-    follow_up = ChatRequest(
-        customer_id=req.customer_id, language=lang,
-        message=('Confirm the latest balance and upcoming obligations after the authorized operation.'
-                 if lang == 'en' else
-                 'Confirma el saldo y los compromisos pendientes tras la operación autorizada.'),
-    )
-    invoked = await invoke_specialists({
-        'request': follow_up.model_dump(), 'roles': roles, 'results': []
-    })
-    specialists = invoked['results']
-    text, verified = confirmation_response(req.action, req.outcome, specialists, lang)
-    event_id = req.outcome['id']
-    return AgentResponse(agent='concierge', message=text,
-                         data={'language':lang, 'invoked_agents':roles,
-                               'specialists':specialists, 'read_back_verified':verified,
-                               'action':req.action, 'transaction_id':event_id})
-
-
-
-# The Concierge owns the approval->specialist execute->readback workflow.
-# The BFF is just the single customer-facing transport and dashboard read model.
 class ApprovalDecision(BaseModel):
-    approval_id: str
-    approved: bool
-    customer_id: str = 'C001'
-    language: str = 'en'
-    original_request: str = ''
+    approval_id:str
+    approved:bool
+    customer_id:str='C001'
+    workflow_id:str
+    language:str='en'
+    original_request:str=''
 
-async def _bank_core(method, path, body=None):
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp=await client.request(method, CORE_URL+path,
-            headers={'X-Internal-Key':INTERNAL_KEY},json=body)
-        resp.raise_for_status()
-        return resp.json()
+async def post_action(action,outcome,customer_id,language):
+    lang='es' if language=='es' else 'en'
+    roles={'execute_pix':['account','wellness'],'block_card':['card'],'open_dispute':['dispute']}[action]
+    question=({'execute_pix':'Check the current balance and future obligations; do not initiate another payment.',
+               'block_card':'Check the current card status, do not block anything.',
+               'open_dispute':'Show current disputes, do not open another case.'}[action])
+    results=await invoke_roles({'customer_id':customer_id,'message':question,'language':lang,'history':[]},roles,lang)
+    return confirmation_response(action,outcome,results,lang),roles,results
 
 @app.post('/approve')
-async def approve(req:ApprovalDecision, x_internal_key:str|None=Header(None)):
-    if not hmac.compare_digest(x_internal_key or '', INTERNAL_KEY):
-        raise HTTPException(401,'Authenticated banking channel required')
-    # The core authorizes ownership and the immutable pending approval payload.
+async def approve(req:ApprovalDecision,x_internal_key:str|None=Header(None)):
+    require_secret(x_internal_key,'CONCIERGE_APPROVAL_KEY')
+    # A signed-in customer may only approve an action prepared in THEIR
+    # persisted workflow. An arbitrary guessed approval ID isn't sufficient.
     try:
-        decision=await _bank_core('POST',
-            f'/approvals/{req.approval_id}/decide?approved={str(req.approved).lower()}&customer_id={req.customer_id}')
+        wf=(await core('GET',f'/workflows/{req.workflow_id}?customer_id={req.customer_id}'))['state']
+    except httpx.HTTPStatusError as e:raise HTTPException(404,'Workflow not found') from e
+    pending={a['approval_id']:a for a in wf.get('pending',[])}
+    already=next((r for r in wf.get('completed',[]) if r['approval_id']==req.approval_id),None)
+    if already:return already['response'] # completed response lost in transit
+    if req.approval_id not in pending:raise HTTPException(403,'Approval not associated with this workflow')
+    try:
+        decision=await core('POST',f'/approvals/{req.approval_id}/decide?approved={str(req.approved).lower()}&customer_id={req.customer_id}')
         if not req.approved:
-            return {'approval':decision,'result':None,
-                'message': 'Acción rechazada.' if req.language=='es' else 'Action declined.'}
-        state=await _bank_core('GET',f'/state/{req.customer_id}')
-        approval=next((x for x in state['approvals'] if x['id']==req.approval_id),None)
-        if approval is None: raise HTTPException(404,'Approval missing')
-        import json
-        payload=json.loads(approval['payload']) if isinstance(approval['payload'],str) else approval['payload']
-        action=approval['action']
-        config={
-            'block_card':('card',{'card_id':payload.get('card_id')}),
-            'open_dispute':('dispute',{'transaction_id':payload.get('transaction_id')}),
-            'execute_pix':('pix',{**payload,'idempotency_key':'PIX-'+req.approval_id}),
-        }
-        if action not in config: raise HTTPException(400,'Unsupported banking operation')
-        role, details=config[action]
-        async with httpx.AsyncClient(timeout=60) as client:
-            result=await client.post(ROLE_URLS[role].rstrip('/')+'/execute',
-                headers={'X-Internal-Key':INTERNAL_KEY, **_agent_gateway_headers(role)},
-                json={'customer_id':req.customer_id,'approval_id':req.approval_id,'payload':details})
-            result.raise_for_status()
-            outcome=result.json()
+            response={'approval':decision,'result':None,'message':'Acción rechazada.' if req.language=='es' else 'Action declined.'}
+        else:
+            state=await core('GET',f'/state/{req.customer_id}',capability='BANK_CORE_READ_KEY')
+            approval=next((x for x in state['approvals'] if x['id']==req.approval_id),None)
+            if not approval:raise HTTPException(404,'Banking approval missing')
+            payload=json.loads(approval['payload']) if isinstance(approval['payload'],str) else approval['payload']
+            action=approval['action']
+            config={'block_card':('card',{'card_id':payload.get('card_id')}),
+                    'open_dispute':('dispute',{'transaction_id':payload.get('transaction_id')}),
+                    'execute_pix':('pix',{**payload,'idempotency_key':'PIX-'+req.approval_id})}
+            if action not in config:raise HTTPException(400,'Unsupported operation')
+            role,details=config[action]
+            async with httpx.AsyncClient(timeout=60) as client:
+                result=await client.post(ROLE_URLS[role].rstrip('/')+'/execute',
+                    headers={'X-Internal-Key':secret('SPECIALIST_EXECUTION_KEY'),**gateway_headers(role)},
+                    json={'customer_id':req.customer_id,'approval_id':req.approval_id,'payload':details})
+                result.raise_for_status();outcome=result.json()
+            if not confirmed(action,outcome):raise HTTPException(502,'Result requires manual reconciliation')
+            try:
+                (message,verified),roles,results=await post_action(action,outcome,req.customer_id,req.language)
+                data={'read_back_verified':verified,'invoked_agents':roles,'specialists':results}
+            except Exception:
+                message=(f'Operación completada (referencia {outcome["id"]}). No pude verificar el saldo posterior.'
+                         if req.language=='es' else
+                         f'Operation completed (reference {outcome["id"]}). Updated banking state could not be verified.')
+                data={'read_back_verified':False}
+            response={'approval':decision,'result':outcome,'message':message,'data':data}
     except httpx.HTTPStatusError as exc:
-        # Do not mask a committed approval as an authorization success.
-        raise HTTPException(502,f'Banking operation failed: upstream HTTP {exc.response.status_code}') from exc
+        # Retry SAME approval. Core and specialists are designed to replay the
+        # completed outcome without duplicating the operation or debit.
+        raise HTTPException(502,f'Banking execution unavailable (HTTP {exc.response.status_code}); retry this approval') from exc
     except httpx.RequestError as exc:
-        raise HTTPException(503,'Banking operation temporarily unreachable') from exc
-    # The operation is ALREADY committed; a readback failure cannot undo it.
+        raise HTTPException(503,'Banking execution uncertain; retry the same approval to reconcile') from exc
+    pending.pop(req.approval_id,None)
+    wf['pending']=list(pending.values())
+    wf.setdefault('completed',[]).append({'approval_id':req.approval_id,'response':response})
+    wf.setdefault('steps',[]).append({'stage':'approval_execution','approval_id':req.approval_id,
+          'status':'completed' if req.approved else 'declined'})
+    await core('POST',f'/workflows/{req.workflow_id}',{'customer_id':req.customer_id,'state':wf})
+    return response
+
+@app.get('/workflow/{workflow_id}')
+async def get_workflow(workflow_id:str,customer_id:str='C001',x_internal_key:str|None=Header(None)):
+    require_secret(x_internal_key,'CONCIERGE_APPROVAL_KEY')
     try:
-        confirmation=await post_action(PostActionRequest(
-            customer_id=req.customer_id,language=req.language,
-            original_request=req.original_request,action=action,outcome=outcome),
-            x_internal_key=INTERNAL_KEY)
-        text=confirmation.message
-        metadata=confirmation.data
-    except Exception:
-        text=(f'Operación completada (referencia {outcome.get("id", "N/A")}). '
-              'No pude verificar el estado posterior.' if req.language=='es' else
-              f'Operation completed (reference {outcome.get("id", "N/A")}). '
-              'I could not verify the updated banking state.')
-        metadata={'read_back_verified':False}
-    return {'approval':decision,'result':outcome,'message':text,'data':metadata}
+        return await core('GET',f'/workflows/{workflow_id}?customer_id={customer_id}')
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code==404:return {'state':{'pending':[],'completed':[],'steps':[]}}
+        raise HTTPException(502,'Workflow state unavailable') from exc

@@ -19,8 +19,14 @@ spec:
           env:
             - name: DATABASE_URL
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DATABASE_URL}}
-            - name: BANK_INTERNAL_KEY
-              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - name: BANK_CORE_READ_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_READ_KEY}}
+            - name: BANK_CORE_WRITE_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_WRITE_KEY}}
+            - name: BANK_APPROVAL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_APPROVAL_KEY}}
+            - name: BANK_RESET_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_RESET_KEY}}
             - {name: ENABLE_DEMO_RESET, value: 'true'} # SYNTHETIC DEMO ONLY
           readinessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 5, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 15, periodSeconds: 10}
@@ -53,8 +59,10 @@ spec:
           ports: [{containerPort: 8101}]
           env:
             - {name: BANK_CORE_URL, value: 'http://aurora-core.aurora-demo.svc.cluster.local:8100'}
-            - name: BANK_INTERNAL_KEY
-              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - name: BANK_CORE_READ_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_READ_KEY}}
+            - name: BANK_CORE_WRITE_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_WRITE_KEY}}
             - {name: MCP_ALLOWED_HOSTS, value: 'aurora-mcp:*,aurora-mcp.aurora-demo.svc.cluster.local:*'}
             # Set MCP_ALLOWED_ORIGINS only to gateway origin(s) proven necessary.
           readinessProbe: {tcpSocket: {port: 8101}, initialDelaySeconds: 5, periodSeconds: 5}
@@ -88,14 +96,25 @@ spec:
           env:
             - {name: BANK_CORE_URL, value: 'http://aurora-core.aurora-demo.svc.cluster.local:8100'}
             - {name: WSO2_MODE, value: 'true'}
-            - name: BANK_INTERNAL_KEY
-              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_INTERNAL_KEY}}
+            - name: BANK_CORE_READ_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_CORE_READ_KEY}}
+            - name: BANK_RESET_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: BANK_RESET_KEY}}
+            - name: CONCIERGE_CALL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_CALL_KEY}}
+            - name: CONCIERGE_APPROVAL_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_APPROVAL_KEY}}
             - name: CONCIERGE_URL
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_URL}}
             - name: CONCIERGE_API_KEY
               valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: CONCIERGE_API_KEY}}
-            - name: DEMO_SESSION_TOKEN
-              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_SESSION_TOKEN}}
+            - name: DEMO_ACCESS_CODE
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_ACCESS_CODE}}
+            - name: DEMO_RESET_CODE
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_RESET_CODE}}
+            - name: DEMO_SESSION_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: aurora-demo-secrets, key: DEMO_SESSION_SIGNING_KEY}}
+            - {name: DEMO_SECURE_COOKIE, value: 'true'}
           readinessProbe: {httpGet: {path: /, port: 8300}, initialDelaySeconds: 5, periodSeconds: 5}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
