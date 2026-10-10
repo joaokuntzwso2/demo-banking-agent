@@ -120,8 +120,18 @@ async def llm(system,user):
         url=os.getenv('OPENAI_URL','').strip()
         if not key:return None
     from openai import AsyncOpenAI
-    options={'api_key':key}
-    if url:options['base_url']=url
+    if managed:
+        # Agent Manager's OpenAI-compatible gateway accepts the configured
+        # inbound API-key header (see the LLM Provider Security tab).
+        # Do not send the upstream model provider's bearer credentials.
+        header=os.getenv('LLM_PROVIDER_API_KEY_HEADER', 'API-Key').strip()
+        if not header or header.lower()=='authorization':
+            raise RuntimeError('Invalid LLM_PROVIDER_API_KEY_HEADER')
+        options={'api_key':'', 'base_url':url,
+                 'default_headers':{header:key, 'Authorization':''}}
+    else:
+        options={'api_key':key}
+        if url:options['base_url']=url
     client=AsyncOpenAI(**options)
     model=os.getenv('OPENAI_MODEL','gpt-4.1-mini')
     with business_span('aurora.llm.chat', **{'gen_ai.operation.name':'chat',
