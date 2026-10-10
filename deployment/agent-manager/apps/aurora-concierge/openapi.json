@@ -1,0 +1,298 @@
+{
+  "components": {
+    "schemas": {
+      "AgentResponse": {
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "default": {},
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "next_actions": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ApprovalDecision": {
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "customer_id": {
+            "default": "C001",
+            "type": "string"
+          },
+          "language": {
+            "default": "en",
+            "type": "string"
+          },
+          "original_request": {
+            "default": "",
+            "type": "string"
+          },
+          "workflow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "approved",
+          "workflow_id"
+        ],
+        "type": "object"
+      },
+      "ChatRequest": {
+        "properties": {
+          "customer_id": {
+            "default": "C001",
+            "type": "string"
+          },
+          "history": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "language": {
+            "default": "en",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "workflow_id": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "ExecuteRequest": {
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "customer_id": {
+            "default": "C001",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "approval_id",
+          "payload"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AgentCallKey": {
+        "in": "header",
+        "name": "X-Agent-Call-Key",
+        "type": "apiKey"
+      },
+      "InternalKey": {
+        "in": "header",
+        "name": "X-Internal-Key",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "Banco Aurora synthetic managed agent API",
+    "title": "Aurora Concierge Agent",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/approve": {
+      "post": {
+        "operationId": "aurora_concierge_post_approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Missing or incorrect internal application credential"
+          },
+          "403": {
+            "description": "Forbidden or unapproved operation"
+          },
+          "422": {
+            "description": "Request validation error"
+          }
+        },
+        "security": [
+          {
+            "InternalKey": []
+          }
+        ],
+        "summary": "Approve"
+      }
+    },
+    "/chat": {
+      "post": {
+        "operationId": "aurora_concierge_post_chat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Missing or incorrect internal application credential"
+          },
+          "403": {
+            "description": "Forbidden or unapproved operation"
+          },
+          "422": {
+            "description": "Request validation error"
+          }
+        },
+        "security": [
+          {
+            "AgentCallKey": []
+          }
+        ],
+        "summary": "Chat"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "aurora_concierge_get_health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "403": {
+            "description": "Forbidden or unapproved operation"
+          },
+          "422": {
+            "description": "Request validation error"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/workflow/{workflow_id}": {
+      "get": {
+        "operationId": "aurora_concierge_get_get_workflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "customer_id",
+            "required": false,
+            "schema": {
+              "default": "C001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Missing or incorrect internal application credential"
+          },
+          "403": {
+            "description": "Forbidden or unapproved operation"
+          },
+          "422": {
+            "description": "Request validation error"
+          }
+        },
+        "security": [
+          {
+            "InternalKey": []
+          }
+        ],
+        "summary": "Get workflow"
+      }
+    }
+  }
+}

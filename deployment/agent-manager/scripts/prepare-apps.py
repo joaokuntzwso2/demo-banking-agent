@@ -6,6 +6,102 @@ imports are not reliable. Regenerate after every change to source agents.
 """
 from pathlib import Path
 import shutil
+import json
+
+
+def openapi_spec(role):
+    """Deterministic OpenAPI 3.0 contract for the actual FastAPI routes.
+
+    Do not import the running agents here. Git source generation must work in a
+    clean Python 3.x checkout, before any runtime dependencies are installed.
+    """
+    schemas = {
+        'ChatRequest': {
+            'type': 'object', 'required': ['message'],
+            'properties': {
+                'message': {'type': 'string'},
+                'customer_id': {'type': 'string', 'default': 'C001'},
+                'language': {'type': 'string', 'default': 'en'},
+                'history': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': True}, 'default': []},
+                'workflow_id': {'type': 'string', 'nullable': True},
+            },
+        },
+        'AgentResponse': {
+            'type': 'object', 'required': ['agent', 'message'],
+            'properties': {
+                'agent': {'type': 'string'},
+                'message': {'type': 'string'},
+                'data': {'type': 'object', 'additionalProperties': True, 'default': {}},
+                'next_actions': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': True}, 'default': []},
+            },
+        },
+        'ExecuteRequest': {
+            'type': 'object', 'required': ['approval_id', 'payload'],
+            'properties': {
+                'customer_id': {'type': 'string', 'default': 'C001'},
+                'approval_id': {'type': 'string'},
+                'payload': {'type': 'object', 'additionalProperties': True},
+            },
+        },
+        'ApprovalDecision': {
+            'type': 'object', 'required': ['approval_id', 'approved', 'workflow_id'],
+            'properties': {
+                'approval_id': {'type': 'string'},
+                'approved': {'type': 'boolean'},
+                'customer_id': {'type': 'string', 'default': 'C001'},
+                'workflow_id': {'type': 'string'},
+                'language': {'type': 'string', 'default': 'en'},
+                'original_request': {'type': 'string', 'default': ''},
+            },
+        },
+    }
+
+    def operation(method, summary, response_schema=None, request_schema=None, auth=None, parameters=None):
+        obj = {
+            'summary': summary,
+            'operationId': f'aurora_{role}_{method}_{summary.lower().replace(" ", "_")}',
+            'responses': {
+                '200': {'description': 'Successful response', 'content': {'application/json': {'schema': response_schema or {'type': 'object', 'additionalProperties': True}}}},
+                '403': {'description': 'Forbidden or unapproved operation'},
+                '422': {'description': 'Request validation error'},
+            },
+        }
+        if request_schema:
+            obj['requestBody'] = {'required': True, 'content': {'application/json': {'schema': {'$ref': f'#/components/schemas/{request_schema}'}}}}
+        if auth:
+            obj['security'] = [{auth: []}]
+            obj['responses']['401'] = {'description': 'Missing or incorrect internal application credential'}
+        if parameters:
+            obj['parameters'] = parameters
+        return obj
+
+    paths = {
+        '/health': {'get': operation('get', 'Health')},
+        '/chat': {'post': operation('post', 'Chat', {'$ref': '#/components/schemas/AgentResponse'}, 'ChatRequest', 'AgentCallKey')},
+    }
+    if role == 'concierge':
+        paths['/approve'] = {'post': operation('post', 'Approve', request_schema='ApprovalDecision', auth='InternalKey')}
+        paths['/workflow/{workflow_id}'] = {'get': operation('get', 'Get workflow', auth='InternalKey', parameters=[
+            {'name': 'workflow_id', 'in': 'path', 'required': True, 'schema': {'type': 'string'}},
+            {'name': 'customer_id', 'in': 'query', 'required': False, 'schema': {'type': 'string', 'default': 'C001'}},
+        ])}
+    else:
+        # All specialists expose /execute. Read-only specialists deliberately
+        # return HTTP 403 if execution is attempted.
+        paths['/execute'] = {'post': operation('post', 'Execute', request_schema='ExecuteRequest', auth='InternalKey')}
+    return {
+        'openapi': '3.0.3',
+        'info': {'title': f'Aurora {role.title()} Agent', 'version': '1.0.0', 'description': 'Banco Aurora synthetic managed agent API'},
+        'paths': paths,
+        'components': {
+            'schemas': schemas,
+            'securitySchemes': {
+                'AgentCallKey': {'type': 'apiKey', 'in': 'header', 'name': 'X-Agent-Call-Key'},
+                'InternalKey': {'type': 'apiKey', 'in': 'header', 'name': 'X-Internal-Key'},
+            },
+        },
+    }
+
 
 root=Path(__file__).resolve().parents[3]
 apps=root/'deployment'/'agent-manager'/'apps'
@@ -21,6 +117,7 @@ for role in roles:
     module='agents.concierge' if role=='concierge' else 'agents.specialists'
     (dest/'main.py').write_text(f'''"""WSO2 Agent Manager Platform-Hosted Custom API Agent: aurora-{role}."""\nimport os\nos.environ["AGENT_ROLE"] = "{role}"\nimport uvicorn\nfrom {module} import app\n\nif __name__ == "__main__":\n    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))\n''')
     (dest/'README.md').write_text(f'''# aurora-{role}\n\nSelf-contained Git build context for WSO2 Agent Manager 1.0.0.\n\n- **Source type:** Platform-Hosted → Source Code\n- **Project Path:** `/deployment/agent-manager/apps/aurora-{role}`\n- **Runtime:** Python 3.12; start command `python main.py`\n- **Interface:** Custom API Agent on port **8000**, OpenAPI path `/openapi.json`\n- **Endpoints:** `POST /chat`, GET `/health`{', POST `/approve`, GET `/workflow/{workflow_id}`' if role=='concierge' else ', POST `/execute` (write specialists only)'}\n- Read root README for environment variables, MCP Proxy, identity, gateway keys, and workflow.\n\n**Generated source.** Change the canonical modules at repository root and rerun\n`python deployment/agent-manager/scripts/prepare-apps.py`; commit the regenerated files before building agents.\n''')
+    (dest/'openapi.json').write_text(json.dumps(openapi_spec(role), indent=2, sort_keys=True) + '\n')
     print(role,':', dest)
 # standalone MCP upstream source bundle: not a platform-hosted agent
 up=root/'deployment'/'agent-manager'/'upstream-mcp'
