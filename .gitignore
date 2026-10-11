@@ -103,3 +103,18 @@ agent-manager-support/.tunnel*/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Banco Aurora v12: local runtime, credentials, and release backups
+agent-manager-support/secrets.env
+agent-manager-support/support.env
+agent-manager-support/gateway-keys.env
+agent-manager-support/.source-sync-backups/
+agent-manager-support/.venv*/
+**/.mcp-public-tunnel/
+**/secrets.env
+**/gateway-keys.env
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*credentials.json
+.aurora-release-backups/

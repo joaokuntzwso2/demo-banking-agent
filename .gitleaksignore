@@ -1,0 +1,5 @@
+# Reviewed Banco Aurora historical synthetic/demo findings
+0e933eddda0032395b7cb46b9d859421a6462396:agent-manager-support/tests/test_tunnel_reliability_v2.py:generic-api-key:41
+0e933eddda0032395b7cb46b9d859421a6462396:tests/test_reconciler.py:generic-api-key:86
+fdaa8bb24a061c5a8cb3ad44dec5f041f73caa37:.env.example:generic-api-key:35
+fdaa8bb24a061c5a8cb3ad44dec5f041f73caa37:README.md:curl-auth-header:147

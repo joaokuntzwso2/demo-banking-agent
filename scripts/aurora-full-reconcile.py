@@ -169,7 +169,7 @@ def backend_fingerprint():
     Do not include ephemeral tunnel files, runtime credentials or generated
     portal credentials. They would cause a rebuild on every successful run.
     """
-    inputs = ['Dockerfile', 'requirements.txt',
+    inputs = ['Dockerfile','.dockerignore', 'requirements.txt',
               'agent-manager-support/k8s/support.yaml',
               'agent-manager-support/k8s/portal.yaml']
     for directory in ('mock_core','mcp_server','banking_common',

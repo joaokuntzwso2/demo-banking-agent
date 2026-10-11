@@ -1,0 +1,34 @@
+name: Banco Aurora source and security
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  source-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit release paths and Docker build exclusions
+        run: python3 scripts/aurora-release-audit-v12.py
+      - name: Run isolated release regression checks
+        run: python3 -m unittest discover -s tests -p 'test_aurora_release_v12.py' -v
+      - name: Validate script source syntax
+        run: |
+          python3 -m py_compile scripts/aurora-release-audit-v12.py scripts/retire-aurora-local-images-v12.py
+          bash -n scripts/start-everything.sh
+  detect-leaked-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
