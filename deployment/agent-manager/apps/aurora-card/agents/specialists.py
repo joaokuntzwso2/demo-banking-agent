@@ -1,12 +1,12 @@
 """Specialists never approve their own writes; tools are MCP-governed."""
-import os,hmac
+import os,hmac,re
 from decimal import Decimal
 from fastapi import Header,HTTPException
 from pydantic import BaseModel
 from banking_common.security import require_secret
 from .common import *
 from .confirmation import parse_brl_amount,money
-from .intents import action_intent,resolve_card,resolve_transaction,resolve_beneficiary
+from .intents import action_intent,resolve_card,resolve_transaction,resolve_beneficiary,resolve_dispute,asks_dispute_status,wants_human
 from .retrieval import grounded_answer
 
 def phrase(lang,en,es):return es if lang=='es' else en
@@ -39,14 +39,42 @@ async def card(r):
     return AgentResponse(agent='card',message=message,data={'card':chosen},next_actions=actions)
 
 async def dispute(r):
-    transactions=(await mcp_tool('list_card_transactions',{'customer_id':r.customer_id}))['transactions']
     disputes=(await mcp_tool('get_dispute_status',{'customer_id':r.customer_id}))['disputes']
+    # A dispute ID identifies a dispute record, not a card transaction. Query
+    # the existing customer-scoped MCP read tool before any mutation planning.
+    if asks_dispute_status(r.message) and not wants_human(r.message):
+        selected=resolve_dispute(disputes,r.message)
+        supplied_id=bool(re.search(r'\b[A-Z]{2,12}[-_][A-Z0-9][A-Z0-9_-]{1,80}\b',r.message,re.I))
+        if selected is None and not supplied_id and len(disputes)==1:
+            selected=disputes[0]
+        if selected:
+            identifier=selected['id']
+            status=str(selected.get('status') or 'unknown').replace('_',' ')
+            status_es={'under review':'en revisión','open':'abierta','pending':'pendiente',
+                       'resolved':'resuelta','closed':'cerrada','rejected':'rechazada'}.get(status,status)
+            msg=phrase(r.language,
+                f'Dispute {identifier} is currently {status}. This is the recorded status, not a promise of refund or resolution.',
+                f'La reclamación {identifier} está actualmente en estado {status_es}. Es el estado registrado, no una promesa de reembolso ni resolución.')
+        elif disputes:
+            # Never resolve an unknown identifier by using a different customer's
+            # record or silently choosing a different dispute.
+            msg=phrase(r.language,
+                'I could not match that dispute ID to your account. Please check the full reference.' if supplied_id else
+                'You have multiple disputes. Please provide the exact dispute ID.',
+                'No encontré ese ID de reclamación en tu cuenta. Verifica la referencia completa.' if supplied_id else
+                'Tienes varias reclamaciones. Indica el ID exacto de la reclamación.')
+        else:
+            msg=phrase(r.language,
+                'No disputes are recorded for your account.',
+                'No hay reclamaciones registradas en tu cuenta.')
+        return AgentResponse(agent='dispute',message=msg,
+            data={'dispute':selected},next_actions=[])
+    transactions=(await mcp_tool('list_card_transactions',{'customer_id':r.customer_id}))['transactions']
     cases=(await mcp_tool('get_human_cases',{'customer_id':r.customer_id}))['service_cases']
     tx=resolve_transaction(transactions,r.message)
     rag=await grounded_answer('dispute',r.language,r.message,{'transaction_id':tx['id'] if tx else None,
         'merchant':tx['merchant'] if tx else None,'amount_brl':tx['amount'] if tx else None})
     message=rag['answer'];actions=[];opened=None
-    from .intents import wants_human
     if wants_human(r.message):
         # The customer explicitly requests a person; creation of a service case
         # does not approve a financial operation or resolve the dispute.

@@ -28,6 +28,8 @@ class Intent:
 def action_intent(message, action):
     text=message.strip()
     if NEGATED_COMMAND[action].search(text):return Intent(None,'negated')
+    if action=='open_dispute' and asks_dispute_status(text):
+        return Intent(None,'existing_dispute_read_only')
     if INFO.search(text) and not re.search(r'\b(and|then|also|adem[aá]s|y luego)\b',text,re.I):return Intent(None,'informational')
     if COMMANDS[action].search(text):return Intent(action,'explicit_positive_command')
     return Intent(None,'no_explicit_command')
@@ -71,3 +73,25 @@ HANDOFF = re.compile(r"\b(human|real person|speak to (someone|a person|an agent)
 
 def wants_human(message):
     return bool(HANDOFF.search(message)) and not bool(re.search(r"\b(do not|don't|no quiero|no necesito|sin)\s+.{0,35}(human|person|agente|persona)\b",message,re.I))
+
+
+def resolve_dispute(disputes,message):
+    """Find exactly one customer-scoped dispute referenced by its full ID.
+
+    The specialist supplies the authorized customer's own MCP dispute list.
+    Never guess from a substring, merchant, transaction ID, or another ID.
+    """
+    found=[]
+    for item in disputes:
+        if not isinstance(item,dict):continue
+        identifier=item.get('id')
+        if not isinstance(identifier,str) or not identifier:continue
+        if re.search(r'(?<![\w-])'+re.escape(identifier)+r'(?![\w-])',message,re.I):
+            found.append(item)
+    return found[0] if len(found)==1 else None
+
+
+def asks_dispute_status(message):
+    """Read-only lookup, not permission to open or modify a dispute."""
+    return (bool(re.search(r'\b(?:dispute|disputes|claim|claims|reclamo|reclamaci[oó]n|reclamaciones|disputa)\b',message,re.I))
+            and bool(re.search(r'\b(?:status|update|track|progress|check|details|detail|estado|estatus|seguimiento|consulta|consultar|n[uú]mero|number|reference|referencia|id)\b|\b(?:how is|what is|what happened|tell me about|cómo va|como va|qué pasó|que paso)\b',message,re.I)))
