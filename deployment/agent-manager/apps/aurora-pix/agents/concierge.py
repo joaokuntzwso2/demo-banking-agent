@@ -4,7 +4,7 @@ Graph: understand -> plan -> parallel independent specialists -> compose.
 Approvals are persisted with the workflow and executed ONLY by their specialist;
 commit acknowledgement is recovered via a same-approval idempotent retry.
 """
-import os,asyncio,json,httpx,uuid,re
+import os,asyncio,json,httpx,uuid,re,logging
 from typing import TypedDict
 from fastapi import Header,HTTPException
 from pydantic import BaseModel,Field
@@ -73,6 +73,11 @@ async def plan(message):
         # denial) MUST NOT silently downgrade into uncontrolled heuristic
         # execution of banking intents. Fail closed and surface the incident.
         if os.getenv('USE_LLM_PROVIDER','false').lower()=='true':
+            status = getattr(exc, 'status_code', None)
+            status = status if type(status) is int and 100 <= status <= 599 else 'none'
+            logging.getLogger('aurora.llm').error(
+                'Governed LLM invocation failed: exception=%s HTTP=%s',
+                type(exc).__name__, status)
             raise HTTPException(503,'Governed model unavailable or rejected the request; no banking actions initiated') from exc
     choices=suggested or heuristic(message)
     return list(dict.fromkeys([*choices,*sorted(must)]))

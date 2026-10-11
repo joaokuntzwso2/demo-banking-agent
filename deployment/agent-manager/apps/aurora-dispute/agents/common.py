@@ -127,7 +127,7 @@ async def llm(system,user):
         header=os.getenv('LLM_PROVIDER_API_KEY_HEADER', 'API-Key').strip()
         if not header or header.lower()=='authorization':
             raise RuntimeError('Invalid LLM_PROVIDER_API_KEY_HEADER')
-        options={'api_key':'', 'base_url':url,
+        options={'api_key':'gateway-only-placeholder', 'base_url':url,
                  'default_headers':{header:key, 'Authorization':''}}
     else:
         options={'api_key':key}
