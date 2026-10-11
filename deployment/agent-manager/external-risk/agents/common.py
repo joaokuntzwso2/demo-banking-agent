@@ -71,6 +71,11 @@ async def _mcp_headers():
     raise RuntimeError('MCP_AUTH_MODE must be agentid or apikey in WSO2_MODE')
 
 async def mcp_tool(name,arguments):
+    # Aurora v12 mandatory specialist role guard (fail closed).
+    _aurora_role = os.getenv('AGENT_ROLE', '').strip()
+    _aurora_allowed = TOOLS_BY_ROLE.get(_aurora_role)
+    if _aurora_allowed is None or name not in _aurora_allowed:
+        raise PermissionError('Agent role missing or MCP tool not authorized')
     role=os.getenv('AGENT_ROLE')
     if role in TOOLS_BY_ROLE and name not in TOOLS_BY_ROLE[role]:
         raise PermissionError(f'Agent {role} may not invoke banking MCP tool {name}')
@@ -127,7 +132,7 @@ async def llm(system,user):
         header=os.getenv('LLM_PROVIDER_API_KEY_HEADER', 'API-Key').strip()
         if not header or header.lower()=='authorization':
             raise RuntimeError('Invalid LLM_PROVIDER_API_KEY_HEADER')
-        options={'api_key':'', 'base_url':url,
+        options={'api_key':'gateway-only-placeholder', 'base_url':url,
                  'default_headers':{header:key, 'Authorization':''}}
     else:
         options={'api_key':key}
