@@ -41,6 +41,9 @@ proc_running(){
 }
 
 stop_all(){
+  # AURORA_V14_2_OWNED_MCP_HANDOFF
+  python3 "$(dirname "${BASH_SOURCE[0]}")/aurora-mcp-forward-guard-v14.py" handoff \
+    || { echo "ERROR: Safe Aurora MCP watchdog handoff failed; refusing tunnel cleanup." >&2; return 1; }
   local name pid
   for name in tunnel bridge kpf; do
     if proc_running "$name"; then

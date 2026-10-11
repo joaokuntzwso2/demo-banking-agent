@@ -345,3 +345,57 @@ committed `deployment/agent-manager/apps/` bundles using the guarded source
 synchronizer, publish the reviewed Git commit, and then deploy/test the six
 managed agents. Do not hand-edit generated bundles or delete an old image
 before replacement workloads and the gateway-level 403 test are verified.
+
+
+### v14 — self-healing MCP forwarding on the startup path
+
+`./scripts/start-everything.sh up` now confirms a **real MCP `initialize`**
+through the private Kubernetes Service forward at `127.0.0.1:18101` and starts
+an owned background monitor. If the selected `aurora-mcp` pod is replaced and
+its `kubectl port-forward` exits, the monitor reconnects the local-only
+forward to the current Service backend. It does **not** rotate Cloudflare
+URLs, create proxies, change MCP scopes, rotate credentials, reset data, or
+rebuild agents. `up`, `agents` and `check` require the real Account AgentID
+positive tool read and a **gateway HTTP 403** for forbidden tool access
+*before* the stateful S01–S06 suite is allowed to run. A failed verification
+fails closed and must never be counted as a passing demo.
+
+Inspect the supervisor without printing secrets:
+
+```bash
+python3 scripts/aurora-mcp-forward-guard-v14.py status
+```
+
+`stop-monitor` stops only the owned supervisor, never the tunnel or database.
+The existing `publish-mcp-secure-tunnel.sh stop` remains the supported tunnel
+shutdown path. This monitor cannot heal a Cloudflare provider outage or a
+misconfigured external WSO2 gateway; in either case the mandatory positive/403
+proof blocks scenario execution and reports failure.
+
+**Shared-data limitation:** The banking Portal and S01–S06 acceptance operate on
+one synthetic customer in a shared Core database. The automatic gateway check
+prevents MCP false readiness, but it **cannot prevent a presenter from placing
+an additional Pix payment during the acceptance test**. Run `check` only when
+no human is submitting UI mutations, or provide a separate test Core/database
+and agent wiring. Do not suppress balance assertion failures or reset the
+shared database unexpectedly to force a pass.
+
+
+### v14.2 — MCP tunnel cleanup ownership handoff
+
+The original tunnel publisher and the v14 forwarding monitor now coordinate
+before **publisher-owned cleanup**. When a stale tunnel needs replacing,
+`stop_all()` first asks the monitor to stop and waits for it to exit. It then
+releases only a watchdog-tracked `18101` Kubernetes port-forward after checking
+the exact process identity. The publisher continues its existing cleanup and
+port-conflict checks. Unrelated listeners are never terminated, and a disputed
+process identity fails closed. **This changes only the local tunnel lifecycle**;
+it does not rotate keys, change AgentID scopes, rebuild agents or reset data.
+
+After installing, run focused/full source tests, then `./scripts/start-everything.sh
+up`. Confirm `python3 scripts/aurora-mcp-forward-guard-v14.py status` and the
+real gateway proof. A future Kubernetes pod replacement should now be handled
+by the watcher, while a deliberate tunnel replacement hands that watcher off
+to the publisher first. The complete end-to-end behavior still requires live
+acceptance on the intended Mac/cluster; simulated source tests are not proof
+of a live recovery.

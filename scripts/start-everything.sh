@@ -23,6 +23,9 @@ if [[ "$ACTION" == check ]]; then
   need amctl
   python3 scripts/verify-aurora-tunnel-public.py \
     || die 'MCP Quick Tunnel is stale; run ./scripts/start-everything.sh up to repair it'
+  # AURORA_V14_MCP_FORWARD_GUARD
+  python3 scripts/aurora-mcp-forward-guard-v14.py ensure --gateway-check \
+    || die 'MCP forward/gateway proof failed; no S01-S06 writes attempted'
   python3 scripts/aurora-full-reconcile.py check
   exit $?
 fi
@@ -72,6 +75,9 @@ if [[ "$ACTION" == up ]]; then
     || die 'Tunnel/upstream reconciliation failed; no agent rebuild requested'
   python3 scripts/verify-aurora-tunnel-public.py \
     || die 'MCP public HTTPS origin did not pass the authenticated marker test'
+  # AURORA_V14_MCP_FORWARD_GUARD
+  python3 scripts/aurora-mcp-forward-guard-v14.py ensure \
+    || die 'Authenticated MCP bridge lost its Kubernetes forward'
   log 'Stage 4/6: Verify identity-secured MCP registration and tool scopes.'
   python3 scripts/aurora-full-reconcile.py check-proxy
 fi
@@ -93,6 +99,9 @@ if [[ "$ACTION" == agents ]]; then
 fi
 log 'Stage 5/6: Create, build, configure and deploy six managed agents.'
 python3 scripts/aurora-full-reconcile.py agents
+# AURORA_V14_MCP_FORWARD_GUARD
+python3 scripts/aurora-mcp-forward-guard-v14.py ensure --gateway-check \
+  || die 'Native gateway not healthy; refusing S01-S06 stateful checks'
 log 'Stage 6/6: Check role assignments, endpoints, and portal integration.'
 python3 scripts/aurora-full-reconcile.py check
 log 'Banco Aurora completed all configured readiness gates.'

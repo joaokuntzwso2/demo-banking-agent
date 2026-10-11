@@ -19,6 +19,37 @@ SEC=load('aurora_authz_native','verify-aurora-agentid-denial.py')
 TUN=load('aurora_tunnel_health','verify-aurora-tunnel-public.py')
 PATCH=load('aurora_installer','patch-aurora-startup-v11.py')
 
+
+def without_v14_startup_guards(start):
+    """In-memory historical v11 fixture; never edits current startup source.
+
+    Keep v11's exact-anchor install/idempotency proof useful after a newer
+    v14 startup integration inserts three independently tested guard blocks.
+    Reject unrecognized partial or changed v14 safety gates.
+    """
+    marker = '# AURORA_V14_MCP_FORWARD_GUARD'
+    rows = start.splitlines(keepends=True)
+    output = []
+    removed = 0
+    i = 0
+    while i < len(rows):
+        if rows[i].strip() != marker:
+            output.append(rows[i])
+            i += 1
+            continue
+        if i + 2 >= len(rows):
+            raise AssertionError('Incomplete v14 guard in legacy test fixture')
+        if rows[i + 1].strip() not in (
+            'python3 scripts/aurora-mcp-forward-guard-v14.py ensure --gateway-check \\',
+            'python3 scripts/aurora-mcp-forward-guard-v14.py ensure \\',
+        ) or not rows[i + 2].strip().startswith("|| die '"):
+            raise AssertionError('Unexpected v14 guard shape in legacy test fixture')
+        removed += 1
+        i += 3
+    if removed != 3:
+        raise AssertionError('Expected exactly three v14 startup safety gates')
+    return ''.join(output)
+
 class NativeAuthzTests(unittest.TestCase):
     def test_python311_grammar(self):
         for path in ('verify-aurora-agentid-denial.py','verify-aurora-tunnel-public.py',
@@ -113,13 +144,13 @@ class TunnelTests(unittest.TestCase):
         self.assertEqual(subprocess.run(['bash','-n',str(ROOT/'scripts'/'start-everything.sh')]).returncode,0)
 
     def test_source_patcher_idempotent(self):
-        s=(ROOT/'scripts'/'start-everything.sh').read_text()
+        s=without_v14_startup_guards((ROOT/'scripts'/'start-everything.sh').read_text())
         r=(ROOT/'scripts'/'aurora-full-reconcile.py').read_text()
         a,b=PATCH.transform(s,r)
         self.assertEqual((a,b),(s,r))
 
     def test_original_first_install_and_repeat(self):
-        s=(ROOT/'scripts'/'start-everything.sh').read_text()
+        s=without_v14_startup_guards((ROOT/'scripts'/'start-everything.sh').read_text())
         r=(ROOT/'scripts'/'aurora-full-reconcile.py').read_text()
         old_s=(s.replace(PATCH.NEW_TUNNEL,PATCH.TUNNEL_BLOCK,1)
                 .replace(PATCH.AFTER_CHECK,PATCH.BEFORE_CHECK,1)
