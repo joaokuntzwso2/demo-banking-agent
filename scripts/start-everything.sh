@@ -87,18 +87,9 @@ if [[ "$ACTION" == up ]]; then
   python3 scripts/aurora-startup-preflight-v15.py auth --action up \
     || die 'Agent Manager session invalid before tunnel/proxy reconciliation'
   log 'Stage 3/6: Validate real HTTPS MCP origin; recover expired Quick Tunnels.'
-  # PID liveness does NOT prove Cloudflare registration. The public probe
-  # compares the origin's authenticated 401 marker over private + public paths.
-  if ! python3 scripts/verify-aurora-tunnel-public.py >/dev/null 2>&1; then
-    log 'Public MCP tunnel unavailable/stale; stop only owned tunnel processes.'
-    bash scripts/publish-mcp-secure-tunnel.sh stop \
-      || die 'Cannot stop the expired owned tunnel safely; inspect diagnose output'
-  fi
-  AURORA_ALLOW_EPHEMERAL_PROXY_UPDATE=true \
-    bash scripts/publish-mcp-secure-tunnel.sh up \
-    || die 'Tunnel/upstream reconciliation failed; no agent rebuild requested'
-  python3 scripts/verify-aurora-tunnel-public.py \
-    || die 'MCP public HTTPS origin did not pass the authenticated marker test'
+  # AURORA_MCP_FIRST_RUN_RESILIENCE_V1
+  bash scripts/aurora-mcp-bootstrap-retry.sh \
+    || die 'MCP public HTTPS tunnel recovery exhausted; no agents rebuilt'
   # AURORA_V14_MCP_FORWARD_GUARD
   python3 scripts/aurora-mcp-forward-guard-v14.py ensure \
     || die 'Authenticated MCP bridge lost its Kubernetes forward'
@@ -113,15 +104,8 @@ if [[ "$ACTION" == agents ]]; then
   log 'Preflight: Verify published agent source and generated build folders.'
   python3 scripts/sync-managed-agent-source.py ensure
   log 'Verify/recover MCP public tunnel before reusing specialist deployments.'
-  if ! python3 scripts/verify-aurora-tunnel-public.py >/dev/null 2>&1; then
-    bash scripts/publish-mcp-secure-tunnel.sh stop \
-      || die 'Cannot stop expired owned MCP tunnel; inspect diagnose output'
-  fi
-  AURORA_ALLOW_EPHEMERAL_PROXY_UPDATE=true \
-    bash scripts/publish-mcp-secure-tunnel.sh up \
-    || die 'MCP HTTPS tunnel recovery failed; no duplicate agents requested'
-  python3 scripts/verify-aurora-tunnel-public.py \
-    || die 'MCP public HTTPS origin not verified'
+  bash scripts/aurora-mcp-bootstrap-retry.sh \
+    || die 'MCP public HTTPS tunnel recovery exhausted; no agents rebuilt'
   python3 scripts/aurora-full-reconcile.py check-proxy
 fi
 # AURORA_V15_AMCTL_AUTH_STAGE5
