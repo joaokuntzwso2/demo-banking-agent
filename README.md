@@ -399,3 +399,76 @@ by the watcher, while a deliberate tunnel replacement hands that watcher off
 to the publisher first. The complete end-to-end behavior still requires live
 acceptance on the intended Mac/cluster; simulated source tests are not proof
 of a live recovery.
+
+
+### v15 — fail-fast macOS toolchain preflight
+
+`./scripts/start-everything.sh up` now runs a **read-only, offline**
+prerequisite gate immediately after selecting the local PATH and *before*
+source synchronization, Colima, Docker, Kubernetes, Agent Manager, tunnel
+rotation, managed builds, or stateful scenario execution. The same gate also
+runs for `agents` and `check`. A `status` query gets a lightweight check and
+remains available for troubleshooting a broken toolchain.
+
+It requires macOS, the tested host Python **3.11 or 3.12** (both accepted;
+managed agents and debug containers may use other interpreters), a functioning
+`pip`/`venv`/SSL Python installation, Git, Docker CLI + Compose v2 + Buildx,
+Colima, k3d v5+, kubectl, cloudflared, WSO2 **amctl 1.0.0**, curl,
+OpenSSL/LibreSSL, lsof and shell/process tools. It checks required repo
+entrypoints too. Missing, unusable and incompatible items are reported
+**individually with remediation hints**; there are no installations or
+credential/network probes performed by preflight. The existing later gates
+still validate Docker daemon availability, cluster readiness, OAuth login,
+Git revision, registered MCP gateway, agent permissions and S01–S06.
+
+For an offline standalone dependency report (without starting anything):
+
+```bash
+python3 scripts/aurora-macos-preflight-v15.py --action up
+```
+
+The preflight is intentionally strict: the Mac must have installed tools,
+including `amctl`, **before** invoking the one-command startup. It does not
+silently install or change tools, bypass role authorization, rotate secrets,
+reset PostgreSQL, or rebuild agents.
+
+
+### v15 — macOS dependency preflight and amctl OAuth session recovery
+
+For `up`, `agents`, and `check`, the startup script checks **before other
+startup work** that it is running natively on Apple Silicon macOS with Python
+3.11/3.12; verifies Git, Docker CLI, Colima, k3d, kubectl,
+cloudflared, curl, OpenSSL, `amctl` **1.0.x**, Python pip/venv, essential
+macOS utilities and required Banco Aurora source files. Docker Compose and
+Buildx are optional for this managed-k3d startup. It lists all detected
+missing/unusable dependencies and fails before starting or changing Colima,
+Kubernetes, tunnels or managed agents. It does not auto-install dependencies.
+The Docker **daemon** and Kubernetes **cluster** are intentionally checked
+later because the initial preflight must work when Colima is stopped.
+
+Once Agent Manager has started, the script confirms the local amctl instance
+and issues an **authenticated read** of `/orgs`. `amctl context show` alone is
+not an authentication test: an expired refresh token can remain stored in an
+otherwise healthy-looking context. A missing/expired session initiates a
+single official `amctl login --url http://api.amp.localhost:8080` browser
+flow in an interactive terminal, and performs the same read afterward.
+Unexpected HTTP 403/500/network errors do **not** cause silent relogin,
+credential replacement or unsafe API retries. In noninteractive environments
+it fails with the supported manual login command; do not bypass authentication
+or persist CLI tokens in Git. The authenticated gate also runs before the MCP
+tunnel/proxy work and agent reconciliation. All operations during the preflight
+are read-only, except for the user's explicitly interactive OAuth login.
+
+Run the preflight without modifying infrastructure:
+
+```bash
+python3 scripts/aurora-startup-preflight-v15.py dependencies --action up
+# After local Agent Manager is reachable:
+python3 scripts/aurora-startup-preflight-v15.py auth --action up
+```
+
+**Scope**: The guard prevents the observed stale-token failure at the
+beginning of reconciliation. Expiration between two independent CLI calls
+remains possible; non-idempotent write calls are never automatically replayed
+by this patch. Re-enter the idempotent orchestrator after renewal if a session
+expires during a very long running build.

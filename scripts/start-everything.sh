@@ -11,7 +11,17 @@ need(){ command -v "$1" >/dev/null 2>&1 || die "Missing prerequisite: $1"; }
 [[ "$ACTION" == up || "$ACTION" == check || "$ACTION" == agents || "$ACTION" == status ]] || die 'Usage: scripts/start-everything.sh [up|check|agents|status]'
 cd "$ROOT"
 export PATH="$HOME/.local/bin:$PATH"
+# AURORA_V15_MACOS_DEPENDENCY_PREFLIGHT
+command -v python3 >/dev/null 2>&1 \
+  || die "Missing prerequisite: python3 (install Python 3.11 or 3.12 before running startup)"
+python3 scripts/aurora-macos-preflight-v15.py --action "$ACTION" \
+  || die 'macOS dependency preflight failed; no startup operations attempted'
 need python3
+# AURORA_V15_DEPENDENCY_PREFLIGHT — BEFORE any infrastructure mutation
+if [[ "$ACTION" != status ]]; then
+  python3 scripts/aurora-startup-preflight-v15.py dependencies --action "$ACTION" \
+    || die 'Mac dependency preflight failed; see missing/unsupported tools above'
+fi
 need kubectl
 if [[ "$ACTION" == status ]]; then
   bash scripts/start-agent-manager.sh status
@@ -21,6 +31,9 @@ if [[ "$ACTION" == status ]]; then
 fi
 if [[ "$ACTION" == check ]]; then
   need amctl
+  # AURORA_V15_AMCTL_AUTH_CHECK
+  python3 scripts/aurora-startup-preflight-v15.py auth --action check \
+    || die 'Agent Manager login must be verified before scenario checks'
   python3 scripts/verify-aurora-tunnel-public.py \
     || die 'MCP Quick Tunnel is stale; run ./scripts/start-everything.sh up to repair it'
   # AURORA_V14_MCP_FORWARD_GUARD
@@ -36,10 +49,9 @@ if [[ "$ACTION" == up ]]; then
   log 'Stage 1/6: Start/reuse the existing Colima + Agent Manager installation.'
   bash scripts/start-agent-manager.sh up
   need amctl
-  if ! amctl context show >/dev/null 2>&1; then
-    log 'Agent Manager OAuth login required; opening official browser login.'
-    amctl login --url http://api.amp.localhost:8080
-  fi
+  # AURORA_V15_AMCTL_AUTH_UP
+  python3 scripts/aurora-startup-preflight-v15.py auth --action up \
+    || die 'Agent Manager login could not be verified before starting bank reconciliation'
   log 'Stage 2/6: Prepare config and deploy/reconcile bank backing services.'
   python3 scripts/aurora-full-reconcile.py prepare
   # 'support' is a new safe action: deploy bank backend WITHOUT re-publishing a
@@ -62,6 +74,9 @@ if [[ "$ACTION" == up ]]; then
   else
     log 'Backing services ready and source unchanged; skipping rebuild and restarts.'
   fi
+  # AURORA_V15_AMCTL_AUTH_STAGE3
+  python3 scripts/aurora-startup-preflight-v15.py auth --action up \
+    || die 'Agent Manager session invalid before tunnel/proxy reconciliation'
   log 'Stage 3/6: Validate real HTTPS MCP origin; recover expired Quick Tunnels.'
   # PID liveness does NOT prove Cloudflare registration. The public probe
   # compares the origin's authenticated 401 marker over private + public paths.
@@ -83,6 +98,9 @@ if [[ "$ACTION" == up ]]; then
 fi
 if [[ "$ACTION" == agents ]]; then
   need git; need cloudflared
+  # AURORA_V15_AMCTL_AUTH_AGENTS
+  python3 scripts/aurora-startup-preflight-v15.py auth --action agents \
+    || die 'Agent Manager login must be verified before agent reconciliation'
   log 'Preflight: Verify published agent source and generated build folders.'
   python3 scripts/sync-managed-agent-source.py ensure
   log 'Verify/recover MCP public tunnel before reusing specialist deployments.'
@@ -97,6 +115,9 @@ if [[ "$ACTION" == agents ]]; then
     || die 'MCP public HTTPS origin not verified'
   python3 scripts/aurora-full-reconcile.py check-proxy
 fi
+# AURORA_V15_AMCTL_AUTH_STAGE5
+python3 scripts/aurora-startup-preflight-v15.py auth --action "$ACTION" \
+  || die 'Agent Manager session invalid before agent reconciliation'
 log 'Stage 5/6: Create, build, configure and deploy six managed agents.'
 python3 scripts/aurora-full-reconcile.py agents
 # AURORA_V14_MCP_FORWARD_GUARD

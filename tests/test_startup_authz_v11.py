@@ -144,20 +144,25 @@ class TunnelTests(unittest.TestCase):
         self.assertEqual(subprocess.run(['bash','-n',str(ROOT/'scripts'/'start-everything.sh')]).returncode,0)
 
     def test_source_patcher_idempotent(self):
-        s=without_v14_startup_guards((ROOT/'scripts'/'start-everything.sh').read_text())
-        r=(ROOT/'scripts'/'aurora-full-reconcile.py').read_text()
-        a,b=PATCH.transform(s,r)
-        self.assertEqual((a,b),(s,r))
+        # v11's patcher was written for the v9.5/v11 startup layout. Test it
+        # on that historical layout, never on the newer live v14/v15 startup.
+        historical_start = (PATCH.NEW_TUNNEL + '\n' + PATCH.AFTER_CHECK +
+                            '\n' + PATCH.AFTER_AGENTS)
+        historical_reconciler = PATCH.AFTER_DENIAL
+        self.assertEqual(
+            PATCH.transform(historical_start, historical_reconciler),
+            (historical_start, historical_reconciler))
 
     def test_original_first_install_and_repeat(self):
-        s=without_v14_startup_guards((ROOT/'scripts'/'start-everything.sh').read_text())
-        r=(ROOT/'scripts'/'aurora-full-reconcile.py').read_text()
-        old_s=(s.replace(PATCH.NEW_TUNNEL,PATCH.TUNNEL_BLOCK,1)
-                .replace(PATCH.AFTER_CHECK,PATCH.BEFORE_CHECK,1)
-                .replace(PATCH.AFTER_AGENTS,PATCH.BEFORE_AGENTS,1))
-        old_r=r.replace(PATCH.AFTER_DENIAL,PATCH.BEFORE_DENIAL,1)
-        patched=PATCH.transform(old_s,old_r)
-        self.assertEqual(patched,(s,r))
-        self.assertEqual(PATCH.transform(*patched),patched)
+        # Exercise the authentic v11 upgrade contract, including idempotency,
+        # without removing newer safety gates from the checked-in startup.
+        old_start = (PATCH.TUNNEL_BLOCK + '\n' + PATCH.BEFORE_CHECK +
+                     '\n' + PATCH.BEFORE_AGENTS)
+        old_reconciler = PATCH.BEFORE_DENIAL
+        expected_start = (PATCH.NEW_TUNNEL + '\n' + PATCH.AFTER_CHECK +
+                          '\n' + PATCH.AFTER_AGENTS)
+        patched = PATCH.transform(old_start, old_reconciler)
+        self.assertEqual(patched, (expected_start, PATCH.AFTER_DENIAL))
+        self.assertEqual(PATCH.transform(*patched), patched)
 
 if __name__=='__main__':unittest.main()
