@@ -1,0 +1,18 @@
+{
+  "provider_list": {
+    "instance": "default", "org": "default", "data": {
+      "limit": 50, "offset": 0, "total": 1,
+      "providers": [
+        {"id":"aurora-openai","name":"Banco Aurora OpenAI","status":"CREATED","template":"openai","uuid":"6aaa1fb6-58dd-402d-82bd-ff4b828e1a24"}
+      ]
+    }
+  },
+  "aurora-account": {
+    "list": {"configs":[{"agentId":"aurora-account","createdAt":"2026-10-10T16:55:31.461065Z","description":"Governed OpenAI LLM binding for Banco Aurora","name":"aurora-openai","projectName":"banco-aurora","type":"llm","uuid":"43752396-6f76-4f3b-89f0-550b9b1fac6c"}],"pagination":{"count":1,"limit":20,"offset":0}},
+    "detail": {"agentId":"aurora-account","createdAt":"2026-10-10T16:55:31.461065Z","description":"Governed OpenAI LLM binding for Banco Aurora","envMappings":{"default":{"configuration":{"policies":[],"providerName":"aurora-openai","providerPolicies":[],"providerUuid":"6aaa1fb6-58dd-402d-82bd-ff4b828e1a24","proxyUuid":"8d4eb2b9-e692-4e6e-9628-21dcbd142424","status":"active","url":""},"environmentName":"default"}},"environmentVariables":[{"key":"url","name":"LLM_PROVIDER_URL"},{"key":"apikey","name":"LLM_PROVIDER_KEY"}],"name":"aurora-openai","projectName":"banco-aurora","type":"llm","updatedAt":"2026-10-10T16:55:31.461065Z","uuid":"43752396-6f76-4f3b-89f0-550b9b1fac6c"}
+  },
+  "aurora-card": {
+    "list": {"configs":[{"agentId":"aurora-card","createdAt":"2026-10-10T17:05:14.445038Z","name":"aurora-card-llm-config","projectName":"banco-aurora","type":"llm","uuid":"d8e10bfe-f9c9-4e48-9e24-d6602c9f623e"}],"pagination":{"count":1,"limit":20,"offset":0}},
+    "detail": {"agentId":"aurora-card","createdAt":"2026-10-10T17:05:14.445038Z","envMappings":{"default":{"configuration":{"policies":[],"providerName":"aurora-openai","providerPolicies":[],"providerUuid":"6aaa1fb6-58dd-402d-82bd-ff4b828e1a24","proxyUuid":"85cae035-0913-4f05-8c62-0033c0b8f3a8","status":"active","url":""},"environmentName":"default"}},"environmentVariables":[{"key":"url","name":"LLM_PROVIDER_URL"},{"key":"apikey","name":"LLM_PROVIDER_KEY"}],"name":"aurora-card-llm-config","projectName":"banco-aurora","type":"llm","updatedAt":"2026-10-10T17:05:14.445038Z","uuid":"d8e10bfe-f9c9-4e48-9e24-d6602c9f623e"}
+  }
+}

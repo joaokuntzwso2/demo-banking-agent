@@ -74,10 +74,32 @@ async def core(method,path,payload=None,capability='BANK_CORE_READ_KEY'):
             headers={'X-Internal-Key':secret(capability),**outbound_headers()})
         if res.status_code>=400:raise HTTPException(res.status_code,'Banking data unavailable')
         return res.json()
+def concierge_transport():
+    """Use AMP's Kubernetes gateway with the published virtual host.
+
+    Applies only to the known Banco Aurora local k3d AMP environment. The
+    browser never sees these addresses or any upstream API keys.
+    """
+    from urllib.parse import urlsplit
+    url = CONCIERGE.rstrip('/')
+    parsed = urlsplit(url)
+    if not (os.getenv('WSO2_MODE', '').lower() == 'true'
+            and os.getenv('KUBERNETES_SERVICE_HOST')):
+        return url, {}
+    if parsed.hostname == 'default-default.am-gateway.localhost':
+        if (parsed.scheme != 'http' or parsed.port != 19080
+                or parsed.path.rstrip('/') != '/aurora-concierge'
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise RuntimeError('Unrecognized local AMP Concierge gateway endpoint')
+        return ('http://gateway-default.openchoreo-data-plane.svc.cluster.local:19080'
+                + parsed.path.rstrip('/'), {'Host': parsed.netloc})
+    return url, {}
+
 async def agent(method,path,payload=None,approval=False):
+    base_url, extra_headers = concierge_transport()
     async with httpx.AsyncClient(timeout=90) as client:
-        res=await client.request(method,CONCIERGE.rstrip('/')+path,json=payload,
-                                 headers=gateway_headers(approval))
+        res=await client.request(method,base_url+path,json=payload,
+                                 headers={**gateway_headers(approval), **extra_headers})
         if res.status_code>=400:raise HTTPException(res.status_code,'Banking assistant is temporarily unavailable; retry safely')
         return res.json()
 

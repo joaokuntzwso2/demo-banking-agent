@@ -92,3 +92,14 @@ executive-scenario-report*.json
 .env.specialist.local
 .env.upstream-mcp.local
 *.trace-export.json
+
+# Banco Aurora local runtime and credentials
+agent-manager-support/*.env
+agent-manager-support/.source-sync-backups/
+agent-manager-support/.venv*/
+agent-manager-support/*.log
+agent-manager-support/*.pid
+agent-manager-support/.tunnel*/
+__pycache__/
+*.pyc
+.DS_Store

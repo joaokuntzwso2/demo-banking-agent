@@ -1,0 +1,55 @@
+# Optional: enable PORTAL_ENABLED=true once Concierge exists.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-portal, namespace: __NS__}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-portal}}
+  template:
+    metadata: {labels: {app: aurora-portal}}
+    spec:
+      containers:
+      - name: portal
+        image: __IMAGE__
+        imagePullPolicy: __PULL_POLICY__
+        command: ["uvicorn", "demo_portal.app:app", "--host", "0.0.0.0", "--port", "8300"]
+        ports: [{containerPort: 8300}]
+        env:
+        - {name: WSO2_MODE, value: 'true'}
+        - {name: BANK_CORE_URL, value: 'http://aurora-core.__NS__.svc.cluster.local:8100'}
+        - name: BANK_CORE_READ_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CORE_READ_KEY}}
+        - name: BANK_RESET_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_RESET_KEY}}
+        - name: BANK_CASE_OPERATOR_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CASE_OPERATOR_KEY}}
+        - name: CONCIERGE_CALL_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: CONCIERGE_CALL_KEY}}
+        - name: CONCIERGE_APPROVAL_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: CONCIERGE_APPROVAL_KEY}}
+        - name: CONCIERGE_URL
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: CONCIERGE_URL}}
+        - name: CONCIERGE_API_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: CONCIERGE_API_KEY}}
+        - name: DEMO_ACCESS_CODE
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DEMO_ACCESS_CODE}}
+        - name: DEMO_RESET_CODE
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DEMO_RESET_CODE}}
+        - name: DEMO_OPERATOR_CODE
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DEMO_OPERATOR_CODE}}
+        - name: DEMO_SESSION_SIGNING_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DEMO_SESSION_SIGNING_KEY}}
+        # Access via kubectl port-forward to localhost HTTP. For HTTPS ingress change to true.
+        - {name: DEMO_SECURE_COOKIE, value: 'false'}
+        readinessProbe: {httpGet: {path: /, port: 8300}, initialDelaySeconds: 5, periodSeconds: 5}
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-portal, namespace: __NS__}
+spec:
+  selector: {app: aurora-portal}
+  ports: [{name: http, port: 8300, targetPort: 8300}]
+  type: ClusterIP

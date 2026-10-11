@@ -1,0 +1,10 @@
+support.env
+secrets.env
+*.local
+__pycache__/
+.mcp-public-tunnel/
+full-automation-state.json
+gateway-keys.env
+.backend-fingerprint
+.source-sync-state.json
+.source-sync-backups/

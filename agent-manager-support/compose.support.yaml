@@ -1,0 +1,94 @@
+# Dedicated supporting stack (does not deploy the 6 managed agents).
+# Agent Manager must reach the published upstream MCP URL from its Gateway.
+name: aurora-amp-support
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aurora
+      POSTGRES_USER: aurora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Missing generated secrets}
+    volumes:
+      - aurora_support_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurora -d aurora"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  core:
+    build:
+      context: ${AURORA_REPO_ROOT:?Missing repo root}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: uvicorn mock_core.app:app --host 0.0.0.0 --port 8100
+    environment:
+      DATABASE_URL: postgresql+psycopg://aurora:${POSTGRES_PASSWORD:?Missing generated secrets}@db:5432/aurora
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:?required}
+      BANK_APPROVAL_KEY: ${BANK_APPROVAL_KEY:?required}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:?required}
+      BANK_CASE_OPERATOR_KEY: ${BANK_CASE_OPERATOR_KEY:?required}
+      ENABLE_DEMO_RESET: 'true'
+    depends_on:
+      db: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:${HOST_CORE_PORT:-8110}:8100'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 18
+      start_period: 10s
+  mcp:
+    build:
+      context: ${AURORA_REPO_ROOT:?Missing repo root}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: uvicorn mcp_server.app:app --host 0.0.0.0 --port 8101
+    environment:
+      BANK_CORE_URL: http://core:8100
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_CORE_WRITE_KEY: ${BANK_CORE_WRITE_KEY:?required}
+      MCP_EXPOSE_LEGACY_SNAPSHOT: 'false'
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp:*,localhost:*,127.0.0.1:*}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
+    depends_on:
+      core: {condition: service_healthy}
+    ports:
+      # Remains loopback-only unless explicitly set. An externally reachable
+      # endpoint needs a secure PRIVATE reverse proxy/ingress, not an open tunnel.
+      - '${MCP_HOST_BIND:-127.0.0.1}:${HOST_MCP_PORT:-8111}:8101'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;s=socket.create_connection(('127.0.0.1',8101),3);s.close()"]
+      interval: 5s
+      timeout: 4s
+      retries: 18
+  portal:
+    profiles: ['portal']
+    build:
+      context: ${AURORA_REPO_ROOT:?Missing repo root}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: uvicorn demo_portal.app:app --host 0.0.0.0 --port 8300
+    environment:
+      WSO2_MODE: 'true'
+      BANK_CORE_URL: http://core:8100
+      BANK_CORE_READ_KEY: ${BANK_CORE_READ_KEY:?required}
+      BANK_RESET_KEY: ${BANK_RESET_KEY:?required}
+      BANK_CASE_OPERATOR_KEY: ${BANK_CASE_OPERATOR_KEY:?required}
+      CONCIERGE_URL: ${CONCIERGE_URL:-}
+      CONCIERGE_API_KEY: ${CONCIERGE_API_KEY:-}
+      CONCIERGE_CALL_KEY: ${CONCIERGE_CALL_KEY:?required}
+      CONCIERGE_APPROVAL_KEY: ${CONCIERGE_APPROVAL_KEY:?required}
+      DEMO_ACCESS_CODE: ${DEMO_ACCESS_CODE:?required}
+      DEMO_RESET_CODE: ${DEMO_RESET_CODE:?required}
+      DEMO_OPERATOR_CODE: ${DEMO_OPERATOR_CODE:?required}
+      DEMO_SESSION_SIGNING_KEY: ${DEMO_SESSION_SIGNING_KEY:?required}
+      DEMO_SECURE_COOKIE: 'false'
+    depends_on:
+      core: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:${HOST_PORTAL_PORT:-8330}:8300'
+volumes:
+  aurora_support_db:

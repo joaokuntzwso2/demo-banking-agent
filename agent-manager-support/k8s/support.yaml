@@ -1,0 +1,135 @@
+# Private synthetic backend: same Kubernetes cluster as Agent Manager egress gateway.
+# Substitute __NS__ and __IMAGE__ via start.sh, not by hand.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aurora-postgres-data
+  namespace: __NS__
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 2Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-db
+  namespace: __NS__
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: aurora-db}}
+  template:
+    metadata: {labels: {app: aurora-db}}
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        env:
+        - {name: POSTGRES_USER, value: aurora}
+        - {name: POSTGRES_DB, value: aurora}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: POSTGRES_PASSWORD}}
+        ports: [{containerPort: 5432}]
+        volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+        readinessProbe:
+          exec: {command: ["sh", "-c", "pg_isready -U aurora -d aurora"]}
+          periodSeconds: 5
+          timeoutSeconds: 3
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: '1', memory: 768Mi}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: aurora-postgres-data}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-db, namespace: __NS__}
+spec:
+  selector: {app: aurora-db}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-core, namespace: __NS__}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-core}}
+  template:
+    metadata: {labels: {app: aurora-core}}
+    spec:
+      containers:
+      - name: core
+        image: __IMAGE__
+        imagePullPolicy: __PULL_POLICY__
+        command: ["uvicorn", "mock_core.app:app", "--host", "0.0.0.0", "--port", "8100"]
+        ports: [{containerPort: 8100}]
+        env:
+        - name: DATABASE_URL
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DATABASE_URL}}
+        - name: BANK_CORE_READ_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CORE_READ_KEY}}
+        - name: BANK_CORE_WRITE_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CORE_WRITE_KEY}}
+        - name: BANK_APPROVAL_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_APPROVAL_KEY}}
+        - name: BANK_RESET_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_RESET_KEY}}
+        - name: BANK_CASE_OPERATOR_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CASE_OPERATOR_KEY}}
+        - {name: ENABLE_DEMO_RESET, value: 'true'}
+        readinessProbe: {httpGet: {path: /health, port: 8100}, periodSeconds: 5, initialDelaySeconds: 5}
+        livenessProbe: {httpGet: {path: /health, port: 8100}, periodSeconds: 10, initialDelaySeconds: 15}
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-core, namespace: __NS__}
+spec:
+  selector: {app: aurora-core}
+  ports: [{name: http, port: 8100, targetPort: 8100}]
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aurora-mcp, namespace: __NS__}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: aurora-mcp}}
+  template:
+    metadata: {labels: {app: aurora-mcp}}
+    spec:
+      containers:
+      - name: mcp
+        image: __IMAGE__
+        imagePullPolicy: __PULL_POLICY__
+        command: ["uvicorn", "mcp_server.app:app", "--host", "0.0.0.0", "--port", "8101"]
+        ports: [{containerPort: 8101}]
+        env:
+        - {name: BANK_CORE_URL, value: 'http://aurora-core.__NS__.svc.cluster.local:8100'}
+        - name: BANK_CORE_READ_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CORE_READ_KEY}}
+        - name: BANK_CORE_WRITE_KEY
+          valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: BANK_CORE_WRITE_KEY}}
+        - {name: MCP_EXPOSE_LEGACY_SNAPSHOT, value: 'false'}
+        - {name: MCP_ALLOWED_HOSTS, value: '__MCP_ALLOWED_HOSTS__'}
+        readinessProbe:
+          tcpSocket: {port: 8101}
+          periodSeconds: 5
+          initialDelaySeconds: 5
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: '1', memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: aurora-mcp, namespace: __NS__}
+spec:
+  selector: {app: aurora-mcp}
+  ports: [{name: mcp, port: 8101, targetPort: 8101}]
+  type: ClusterIP
