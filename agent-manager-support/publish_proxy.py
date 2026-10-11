@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 # One action scope per tool. This allows the exact Python role matrix to be
@@ -320,73 +321,265 @@ def is_quick_tunnel_upstream(value):
             and bool(re.fullmatch(r'[a-z0-9-]+\.trycloudflare\.com', parts.hostname or '')))
 
 
-def ensure_known_proxy(path, expected_url, expected_id, desired_payload=None):
+def matching_gateway(org, env_handle, env_uuid, *, attempts=30, interval=3):
+    """Wait until an ACTIVE EGRESS/BOTH gateway maps to the exact env UUID."""
+    for n in range(attempts):
+        result = subprocess.run(
+            ['amctl', 'gateway', 'list', '--org', org, '--env', env_handle, '--json'],
+            capture_output=True, text=True, timeout=40)
+        if result.returncode:
+            fail('Cannot verify gateway environment mapping via amctl gateway list; '
+                 'no MCP proxy mutation attempted. ' + result.stderr[:300])
+        try:
+            response = json.loads(result.stdout)
+        except ValueError:
+            fail('Gateway list did not return JSON; refusing to guess gateway mapping')
+        gateways = response.get('data', response).get('gateways') if isinstance(response, dict) else None
+        if not isinstance(gateways, list):
+            fail('Gateway inventory lacks data.gateways[]; no proxy mutation attempted')
+        names = []
+        for gateway in gateways:
+            if not isinstance(gateway, dict):
+                continue
+            associated = gateway.get('environments') or []
+            if not isinstance(associated, list):
+                continue
+            uuids = {x.get('id') or x.get('uuid') for x in associated if isinstance(x, dict)}
+            if (env_uuid in uuids and gateway.get('status') == 'ACTIVE'
+                    and gateway.get('gatewayType') in ('BOTH', 'EGRESS')):
+                names.append(gateway.get('name'))
+        if len(names) == 1 and isinstance(names[0], str):
+            return names[0]
+        if len(names) > 1:
+            fail('Multiple ACTIVE egress gateways match; explicit endpoint gateway selection is required')
+        if n + 1 < attempts:
+            if n == 0 or (n + 1) % 5 == 0:
+                print(f'No ACTIVE egress gateway mapped to live {env_handle!r} UUID yet; waiting ({n+1}/{attempts}).', flush=True)
+            time.sleep(interval)
+    fail(f'No ACTIVE EGRESS/BOTH gateway associated with {env_handle!r} '
+         f'UUID {env_uuid} after {attempts} checks. Check gateway environment registration.')
+
+
+def wait_proxy_deployed(path, live_uuid, expected_url, attempts=30, interval=3):
+    """The role endpoint rejects grants until the per-environment gateway is deployed."""
+    for n in range(attempts):
+        current = apicall(path)
+        eps = current.get('endpoints') if isinstance(current, dict) else None
+        if not isinstance(eps, list) or len(eps) != 1:
+            fail('MCP proxy endpoint shape changed while awaiting deployment')
+        ep = eps[0]
+        entries = ep.get('environments') or []
+        if len(entries) != 1 or entries[0].get('environmentUuid') != live_uuid:
+            fail('MCP proxy deployment environment UUID changed or is stale')
+        current_url = ((ep.get('upstream') or {}).get('main') or {}).get('url')
+        if current_url != expected_url:
+            fail('MCP proxy HTTPS upstream changed during deployment')
+        status = entries[0].get('deploymentStatus')
+        if status == 'Deployed':
+            print(f'Confirmed MCP proxy deployed to live environment UUID {live_uuid}.')
+            return
+        if n == 0 or (n + 1) % 5 == 0:
+            print(f'MCP proxy deployment pending (status={status!r}; check {n+1}/{attempts}).', flush=True)
+        if n + 1 < attempts:
+            time.sleep(interval)
+    fail('MCP proxy did not reach Deployed; inspect amp-api logs for '
+         '"no gateway mapped to environment" or gateway deployment errors. '
+         'No roles have been granted.')
+
+
+def verify_dns_from_cluster(url, context, *, namespace='wso2-amp'):
+    """Wait for actual Kubernetes DNS readiness for a new HTTPS tunnel hostname.
+
+    The check uses ONE disposable BusyBox pod, avoiding a new image pull and
+    scheduling race on each DNS retry. Actual resolution always goes through
+    the pod's configured nameserver. In the dedicated local demo only, a
+    proven CoreDNS/public-DNS discrepancy triggers a narrowly scoped, backed-
+    up CoreDNS forwarding-zone repair. It never substitutes an IP for the
+    target URL or bypasses Agent Manager URL/SSRF checks.
+    """
+    host = urlsplit(url).hostname
+    if not host or not is_quick_tunnel_upstream(url):
+        return
+    if not context or not re.fullmatch(r'[A-Za-z0-9_.-]+', context):
+        fail('Missing trusted KUBE_CONTEXT for in-cluster DNS verification')
+    try:
+        wait_seconds = int(os.getenv('AURORA_MCP_DNS_WAIT_SECONDS', '180'))
+    except ValueError:
+        fail('AURORA_MCP_DNS_WAIT_SECONDS must be an integer')
+    if not 30 <= wait_seconds <= 360:
+        fail('AURORA_MCP_DNS_WAIT_SECONDS must be between 30 and 360')
+    pod = f'aurora-mcp-dns-{os.getpid()}'
+    prefix = ['kubectl', '--context', context, '-n', namespace]
+    last_result = ''
+    def run_kubectl(args, *, timeout=25):
+        try:
+            return subprocess.run(prefix + args, capture_output=True,
+                                  text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+    def compact(result):
+        if result is None:
+            return 'command timed out'
+        return ((result.stdout or '') + '\n' + (result.stderr or '')).strip()[-1200:]
+    try:
+        create = run_kubectl(['run', pod, '--restart=Never',
+                              '--image=busybox:1.36.1', '--command',
+                              '--', 'sleep', '450'], timeout=30)
+        if create is None or create.returncode != 0:
+            fail('Failed to create Kubernetes DNS diagnostic Pod: ' + compact(create))
+        ready = run_kubectl(['wait', '--for=condition=Ready', 'pod/' + pod,
+                             '--timeout=75s'], timeout=85)
+        if ready is None or ready.returncode != 0:
+            state = run_kubectl(['get', 'pod', pod, '-o', 'wide'], timeout=15)
+            describe = run_kubectl(['describe', 'pod', pod], timeout=15)
+            fail('Kubernetes DNS diagnostic Pod did not become Ready. '
+                 'This may be image pull, scheduling, or container startup—not DNS. '
+                 'Pod: ' + compact(state) + ' Details: ' + compact(describe))
+        print(f'Kubernetes DNS diagnostic Pod ready; waiting up to {wait_seconds}s '
+              f'for {host} through its configured DNS.', flush=True)
+        stop_at = time.monotonic() + wait_seconds
+        attempt = 0
+        repaired_dns = False
+        while True:
+            attempt += 1
+            check = run_kubectl(['exec', pod, '--', 'nslookup', host], timeout=20)
+            if check is not None and check.returncode == 0:
+                print(f'In-cluster DNS verified for {host} (attempt {attempt}).', flush=True)
+                return
+            last_result = compact(check)
+            # Dedicated local demo only. Repair a reproducible DNS discrepancy
+            # after two failed checks, not a transport/scheduling fault. The
+            # verification Pod still must resolve via its normal CoreDNS.
+            if (attempt == 2 and not repaired_dns and 'NXDOMAIN' in last_result
+                    and os.getenv('AURORA_MCP_AUTO_REPAIR_DNS', '1') == '1'
+                    and context == 'k3d-amp-local'):
+                normal_dns = run_kubectl(['exec', pod, '--', 'nslookup',
+                                          'cloudflare.com'], timeout=20)
+                public_dns = run_kubectl(['exec', pod, '--', 'nslookup',
+                                          host, '1.1.1.1'], timeout=20)
+                # We need a proven response for the exact target hostname,
+                # not merely success connecting to the upstream resolver.
+                resolved = (public_dns is not None
+                            and public_dns.returncode == 0
+                            and re.search(r'(?m)^Name:\s*' + re.escape(host)
+                                          + r'\s*$', public_dns.stdout or ''))
+                if (normal_dns is not None and normal_dns.returncode == 0
+                        and resolved):
+                    helper = (Path(__file__).resolve().parents[1]
+                              / 'scripts/aurora-repair-tunnel-coredns.py')
+                    if not helper.is_file():
+                        fail('Dedicated DNS recovery helper missing; cannot repair CoreDNS')
+                    print('Confirmed: CoreDNS NXDOMAIN while public DNS resolves '
+                          'the exact Quick Tunnel hostname. Repairing only the '
+                          'trycloudflare.com forwarding zone in dedicated amp-local.',
+                          flush=True)
+                    fix = subprocess.run(
+                        [sys.executable, str(helper), '--context', context,
+                         '--host', host], capture_output=True, text=True,
+                        timeout=90)
+                    if fix.stdout.strip():
+                        print(fix.stdout.strip(), flush=True)
+                    if fix.returncode != 0:
+                        fail('Dedicated CoreDNS recovery failed: '
+                             + (fix.stderr or fix.stdout).strip()[-1200:])
+                    repaired_dns = True
+                    # ConfigMap projection + CoreDNS reload are asynchronous.
+                    stop_at = max(stop_at, time.monotonic() + 120)
+            remaining = stop_at - time.monotonic()
+            if remaining <= 0:
+                break
+            if attempt == 1 or attempt % 3 == 0:
+                print(f'Kubernetes DNS not ready for {host}; retrying '
+                      f'(attempt {attempt}, {int(remaining)}s remaining).', flush=True)
+            time.sleep(min(10, remaining))
+        # Collect comparison lookups only for *diagnosis*. They do not make
+        # proxy creation proceed and never change the nameserver in use.
+        normal = run_kubectl(['exec', pod, '--', 'nslookup', 'cloudflare.com'], timeout=20)
+        public = run_kubectl(['exec', pod, '--', 'nslookup', host, '1.1.1.1'], timeout=20)
+        fail('Kubernetes DNS never resolved tunnel hostname during bounded wait. '
+             f'Target result: {last_result}; '
+             f'Known public domain via cluster DNS: {compact(normal)}; '
+             f'Target via diagnostic-only public resolver 1.1.1.1: {compact(public)}. '
+             'Check CoreDNS upstream forwarding, DNS egress, and live tunnel lifecycle. '
+             'No DNS settings or SSRF protections were altered.')
+    finally:
+        # Avoid retaining diagnostic resources even after Pod/pull failure.
+        run_kubectl(['delete', 'pod', pod, '--ignore-not-found=true',
+                     '--wait=false'], timeout=20)
+
+
+def ensure_known_proxy(path, expected_url, expected_id, desired_payload=None,
+                       *, valid_environment_uuids=None):
+    """Repair only a positively identified Aurora proxy with an orphan env UUID.
+
+    Fail closed if the old environment is still live, or any security/tool/scope
+    invariants differ. Never replay a redacted GET payload as a PUT: use the
+    freshly built payload containing the validated current origin key.
+    """
     existing = apicall(path, allow_missing=True)
     if existing is None:
         return False
-    if not isinstance(existing, dict) or existing.get('id') != expected_id:
-        fail('Existing proxy does not have the exact expected Banco Aurora identity; refusing to overwrite.')
+    if desired_payload is None:
+        fail('Existing proxy reconciliation requires the complete verified payload')
+    if (not isinstance(existing, dict) or existing.get('id') != expected_id or
+            existing.get('name') != 'Banco Aurora Banking MCP' or
+            existing.get('context') != '/aurora-banking'):
+        fail('Existing proxy identity/name/context not exclusively owned by Banco Aurora')
     endpoints = existing.get('endpoints')
     if not isinstance(endpoints, list) or len(endpoints) != 1:
-        fail('Existing MCP proxy has unexpected endpoint count; refusing update.')
+        fail('Existing MCP proxy has unexpected endpoint count')
     ep = endpoints[0]
+    desired = desired_payload['endpoints'][0]
+    if ep.get('id') != 'primary' or ep.get('name') != 'primary':
+        fail('Existing proxy does not have the expected primary endpoint')
     upstream = ((ep.get('upstream') or {}).get('main') or {})
     old_url = upstream.get('url')
     if not old_url:
-        fail('Proxy exists but upstream URL is missing. Review before rerunning.')
-    if old_url == expected_url:
-        auth = upstream.get('auth') or {}
-        if (auth.get('type') != 'api-key' or auth.get('header') != 'X-Aurora-Origin-Key'
-                or not ep.get('security', {}).get('identity', {}).get('enabled')):
-            fail('Existing proxy has matching URL but lacks the expected Aurora origin or AgentID security.')
-        print('Existing MCP proxy found; verified current HTTPS upstream without recreation.')
-        return True
-
-    # A Quick Tunnel address is temporary. Permit auto-rotation only for the
-    # exact repo-owned proxy and only when the operator's full-stack launcher
-    # explicitly opts in. Never rewrite a stable hostname or foreign proxy.
-    if os.getenv('AURORA_ALLOW_EPHEMERAL_PROXY_UPDATE', '').lower() != 'true':
-        fail(f'Proxy already exists with a different upstream URL ({old_url}). '
-             'Use the repo all-in-one launcher to safely rotate a known Aurora Quick Tunnel.')
-    if desired_payload is None:
-        fail('Cannot rotate proxy without fresh verified MCP tool descriptors and authenticated upstream payload.')
-    if not (is_quick_tunnel_upstream(old_url) and is_quick_tunnel_upstream(expected_url)):
-        fail('Refusing to replace non-Quick-Tunnel or non-public upstream URL.')
-    if existing.get('name') != 'Banco Aurora Banking MCP' or existing.get('context') != '/aurora-banking':
-        fail('Proxy name/context do not match the repo-owned Banco Aurora proxy; refusing to overwrite.')
-    if ep.get('id') != 'primary' or ep.get('name') != 'primary':
-        fail('Proxy endpoint does not match the repo-owned primary endpoint.')
-    if not ep.get('security', {}).get('identity', {}).get('enabled'):
-        fail('Existing proxy lacks AgentID identity security; refusing automatic URL rotation.')
+        fail('Existing proxy has no upstream URL; refusing modification')
     auth = upstream.get('auth') or {}
     if auth.get('type') != 'api-key' or auth.get('header') != 'X-Aurora-Origin-Key':
-        fail('Existing proxy origin authentication is not the Aurora expected configuration.')
+        fail('Existing proxy origin authentication is not Aurora configuration')
+    if not (ep.get('security') or {}).get('enabled') or not (ep.get('security') or {}).get('identity', {}).get('enabled'):
+        fail('Existing proxy lacks expected OAuth/AgentID security')
     old_tools = (ep.get('capabilities') or {}).get('tools') or []
-    if ({t.get('name') for t in old_tools if isinstance(t, dict)} != set(ACTIONS)
-            or len(old_tools) != len(ACTIONS)):
-        fail('Existing proxy tool definitions differ from 15 known Aurora tools; refusing overwrite.')
-    old_env = {x.get('environmentUuid') for x in ep.get('environments',[]) if isinstance(x,dict)}
-    new_env = {x.get('environmentUuid') for x in desired_payload['endpoints'][0]['environments']}
+    if (len(old_tools) != len(ACTIONS)
+            or {x.get('name') for x in old_tools if isinstance(x, dict)} != set(ACTIONS)):
+        fail('Existing proxy tools differ; refusing automatic update')
+    old_envs = ep.get('environments') or []
+    if len(old_envs) != 1 or not isinstance(old_envs[0], dict):
+        fail('Existing proxy has multiple or malformed environment mappings')
+    old_env = old_envs[0].get('environmentUuid')
+    new_env = desired['environments'][0]['environmentUuid']
+    if not UUID_PATTERN.fullmatch(str(old_env)):
+        fail('Existing proxy environment UUID malformed')
     if old_env != new_env:
-        fail('Existing proxy environment differs; refusing automatic update.')
-    # Scope mappings must also already be exactly the published Aurora set.
-    scope_path = path + '/scopes'
-    scope_data = item_list(apicall(scope_path))
-    actual = {x.get('action'): x.get('tools') for x in scope_data if isinstance(x,dict)}
-    if len(actual) != len(ACTIONS) or any(actual.get(action) != [tool] for tool,action in ACTIONS.items()):
-        fail('Existing proxy OAuth tool scopes differ from Aurora policy; refusing automatic URL rotation.')
-
-    # No DELETE or recreate: preserve the org-level identity and scope grants.
-    # Agent Manager 1.0.0 may reject PUT if its installed API contract differs;
-    # in that case stop, keep the previous proxy, and report the server error.
-    apicall(path, 'PUT', desired_payload)
-    latest = apicall(path)
-    if not isinstance(latest, dict):
-        fail('Proxy update response could not be independently verified.')
-    got = ((latest.get('endpoints') or [{}])[0].get('upstream') or {}).get('main') or {}
-    if got.get('url') != expected_url:
-        fail('Proxy update request returned but newly registered upstream URL was not confirmed.')
-    print('Rotated verified Banco Aurora Quick Tunnel upstream without deleting the proxy or its scopes.')
+        if valid_environment_uuids is None or old_env in valid_environment_uuids:
+            fail('Existing proxy environment differs but is still live or unverified; refusing automatic remapping')
+        print(f'Reconciling orphaned proxy environment UUID {old_env} to live UUID {new_env}.')
+    requires_url_rotation = old_url != expected_url
+    if requires_url_rotation:
+        if os.getenv('AURORA_ALLOW_EPHEMERAL_PROXY_UPDATE', '').lower() != 'true':
+            fail('An existing MCP proxy uses a different upstream; run the full startup for safe Quick Tunnel rotation')
+        if not (is_quick_tunnel_upstream(old_url) and is_quick_tunnel_upstream(expected_url)):
+            fail('Refusing automatic rotation of a non-Quick-Tunnel upstream')
+    scopes = item_list(apicall(path + '/scopes'))
+    actual = {x.get('action'): x.get('tools') for x in scopes if isinstance(x, dict)}
+    if (len(actual) != len(scopes) or
+            any(action not in ACTIONS.values() or actual[action] != [tool]
+                for tool, action in ACTIONS.items() if action in actual)):
+        fail('Existing MCP tool scopes have unexpected or duplicate mappings; refusing proxy overwrite')
+    # Known partial scope creation is safe to complete via ensure_scopes below.
+    if old_env != new_env or requires_url_rotation or old_envs[0].get('deploymentStatus') != 'Deployed':
+        apicall(path, 'PUT', desired_payload)
+        updated = apicall(path)
+        uep = (updated.get('endpoints') or [{}])[0]
+        if (uep.get('environments') or [{}])[0].get('environmentUuid') != new_env:
+            fail('Proxy PUT returned, but live environment UUID was not persisted')
+        if (((uep.get('upstream') or {}).get('main') or {}).get('url') != expected_url):
+            fail('Proxy PUT returned, but verified HTTPS URL was not persisted')
+        print('Reconciled existing Aurora MCP proxy without deleting identity or scopes.')
+    else:
+        print('Existing proxy uses the live environment and verified HTTPS upstream; no update needed.')
     return True
 
 
@@ -455,11 +648,18 @@ def main():
     if args.dry_run:
         print('DRY RUN: no Agent Manager API calls made.')
         return
-    if not env_uuid or env_uuid.startswith('REPLACE'):
-        env_uuid = resolve_environment_uuid(apicall(f'/orgs/{org}/environments'), env_handle)
-        print(f'Resolved environment {env_handle!r} UUID from Agent Manager: {env_uuid}')
-    elif not UUID_PATTERN.fullmatch(env_uuid):
-        fail('AMP_ENVIRONMENT_UUID is not a valid UUID; use a real value from Agent Manager')
+    # The local env file survives Colima/k3d reinstallations; its UUID does not.
+    # Never use a persisted override as the source of truth for proxy deployment.
+    env_records = apicall(f'/orgs/{org}/environments')
+    live_uuid = resolve_environment_uuid(env_records, env_handle)
+    if env_uuid and env_uuid != live_uuid:
+        print(f'Ignored stale AMP_ENVIRONMENT_UUID for {env_handle!r}; using live Agent Manager UUID {live_uuid}.')
+    env_uuid = live_uuid
+    gateway = matching_gateway(org, env_handle, env_uuid)
+    print(f'Resolved live environment {env_handle!r}: {env_uuid}; gateway: {gateway}.')
+    # Verify that DNS works inside the cluster, not merely from macOS via DoH.
+    if is_quick_tunnel_upstream(url):
+        verify_dns_from_cluster(url, os.getenv('KUBE_CONTEXT', ''))
     pbase=f'/orgs/{org}/mcp-proxies'
     mode = os.getenv('AMP_DISCOVERY_MODE', 'control-plane').strip().lower()
     if mode == 'cluster':
@@ -480,9 +680,30 @@ def main():
     print('Live MCP discovery verified exactly the expected 15 tools with real input schemas.')
     proxy_path=f'{pbase}/{proxy_id}'
     payload=build_proxy_payload(proxy_id, url, env_uuid, tool_descriptors)
-    if not ensure_known_proxy(proxy_path,url,proxy_id,payload):
+    live_records = item_list(env_records)
+    if isinstance(env_records, dict) and type(env_records.get('total')) is int:
+        if env_records['total'] != len(live_records):
+            fail('Environment inventory is paginated; cannot prove an old UUID is orphaned')
+    live_ids = {environment_identity(rec)[1] for rec in live_records if isinstance(rec, dict)}
+    if not ensure_known_proxy(proxy_path,url,proxy_id,payload,
+                              valid_environment_uuids=live_ids):
         try:
-            apicall(pbase,'POST',payload)
+            for attempt in range(1, 4):
+                try:
+                    apicall(pbase, 'POST', payload)
+                    break
+                except RuntimeError as exc:
+                    # AMP 1.0 may transiently have a negative Kubernetes DNS
+                    # cache even after a diagnostic pod resolves the new URL.
+                    # An explicit 400 DNS-rejection is retryable ONLY if a
+                    # fresh GET proves the proxy was not persisted.
+                    if not re.search(r'url host could not be resolved|no such host', str(exc), re.I) or attempt == 3:
+                        raise
+                    existing_after_error = apicall(proxy_path, allow_missing=True)
+                    if existing_after_error is not None:
+                        fail('MCP proxy exists following a rejected POST; refuse blind duplicate creation')
+                    print(f'AMP DNS cache rejected new Quick Tunnel hostname; retrying ({attempt}/2).', flush=True)
+                    time.sleep(10)
         except RuntimeError as exc:
             if 'Invalid request body' in str(exc) or 'invalid request body' in str(exc):
                 fail('Agent Manager still rejected the structured MCP Tool payload as Invalid request body. '
@@ -498,6 +719,8 @@ def main():
             raise
         print(f'Created identity-secured MCP proxy {proxy_id}.')
     ensure_scopes(org,proxy_id,ACTIONS)
+    # Scope creation may trigger gateway reconciliation; role POST must wait.
+    wait_proxy_deployed(proxy_path, env_uuid, url)
     if os.getenv('AMP_CREATE_ROLES','true').lower()=='true':
         ensure_roles(org,env_handle,proxy_id)
     print('\nPROXY SETUP COMPLETE. Confirm gateway artifact is Active in Agent Manager Console.')

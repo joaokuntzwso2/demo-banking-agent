@@ -8,8 +8,14 @@ ACTION="${1:-up}"
 log(){ printf '\n[aurora-full] %s\n' "$*"; }
 die(){ printf '\n[aurora-full] FAILED: %s\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "Missing prerequisite: $1"; }
-[[ "$ACTION" == up || "$ACTION" == check || "$ACTION" == agents || "$ACTION" == status ]] || die 'Usage: scripts/start-everything.sh [up|check|agents|status]'
+[[ "$ACTION" == up || "$ACTION" == check || "$ACTION" == agents || "$ACTION" == status || "$ACTION" == fresh ]] || die 'Usage: scripts/start-everything.sh [up|check|agents|status|fresh --yes]'
 cd "$ROOT"
+if [[ "$ACTION" == fresh ]]; then
+  [[ $# == 2 && "${2:-}" == --yes ]] || die 'Usage: ./scripts/start-everything.sh fresh --yes (DELETES the dedicated Colima VM and all its data)'
+  bash scripts/aurora-fresh-reset.sh --yes
+  # Re-enter the exact same vetted startup path; never duplicate installation logic.
+  exec bash scripts/start-everything.sh up
+fi
 export PATH="$HOME/.local/bin:$PATH"
 # AURORA_V15_MACOS_DEPENDENCY_PREFLIGHT
 command -v python3 >/dev/null 2>&1 \
@@ -39,6 +45,9 @@ if [[ "$ACTION" == check ]]; then
   # AURORA_V14_MCP_FORWARD_GUARD
   python3 scripts/aurora-mcp-forward-guard-v14.py ensure --gateway-check \
     || die 'MCP forward/gateway proof failed; no S01-S06 writes attempted'
+  # AURORA_CONCIERGE_CORE_EGRESS_VERIFY_V1
+  python3 scripts/aurora-concierge-core-egress.py verify \
+    || die 'Concierge cannot reach Aurora Core; run startup up to provision narrow egress'
   python3 scripts/aurora-full-reconcile.py check
   exit $?
 fi
@@ -123,6 +132,9 @@ python3 scripts/aurora-full-reconcile.py agents
 # AURORA_V14_MCP_FORWARD_GUARD
 python3 scripts/aurora-mcp-forward-guard-v14.py ensure --gateway-check \
   || die 'Native gateway not healthy; refusing S01-S06 stateful checks'
+# AURORA_CONCIERGE_CORE_EGRESS_ENSURE_V1
+python3 scripts/aurora-concierge-core-egress.py ensure \
+  || die 'Refusing S01-S06; narrow Concierge-to-Core egress could not be verified'
 log 'Stage 6/6: Check role assignments, endpoints, and portal integration.'
 python3 scripts/aurora-full-reconcile.py check
 log 'Banco Aurora completed all configured readiness gates.'

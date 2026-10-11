@@ -77,6 +77,28 @@ def redacted_cli_error(output, args):
     return (' | '.join(chosen) or 'amctl returned an empty error response')[:1600]
 
 
+
+def safe_executive_scenario_error(stdout, stderr):
+    """Show the exception tail; redact values from local private config files.
+
+    This is diagnostics only; it does not change scenario pass/fail or retries.
+    """
+    output = (stdout or '').rstrip() + '\n' + (stderr or '').rstrip()
+    for filename in ('secrets.env', 'support.env'):
+        path = SUPPORT / filename
+        if not path.is_file():
+            continue
+        for line in path.read_text(errors='replace').splitlines():
+            if '=' not in line or line.lstrip().startswith('#'):
+                continue
+            key, value = line.split('=', 1)
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if (len(value) >= 8 and
+                re.search(r'(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH)', key, re.I)):
+                output = output.replace(value, '[REDACTED:' + key + ']')
+    return '\n'.join(output.strip().splitlines()[-75:])[-7000:]
+
+
 def cmd(args, *, input_text=None, optional=False, hide=False, timeout=120):
     p = subprocess.run(args, text=True, input=input_text, capture_output=True, timeout=timeout,
                        cwd=ROOT)
@@ -84,6 +106,10 @@ def cmd(args, *, input_text=None, optional=False, hide=False, timeout=120):
         detail = p.stderr.strip() or p.stdout.strip()
         if hide:
             detail = redacted_cli_error(detail, args)
+        elif any(str(arg).endswith('/run-executive-scenarios.py') for arg in args):
+            # The root exception is at the END of long Python tracebacks.
+            # Redact private config values before showing the tail.
+            detail = safe_executive_scenario_error(p.stdout, p.stderr)
         else:
             detail = detail[:1000]
         hint = ('; CLI exit 2 indicates a flag/argument validation problem'
@@ -211,6 +237,14 @@ def get_git_commit():
     return sha
 
 
+def current_amp_environment_uuid():
+    # Reuse the publisher's strict parser; never infer a name from a UUID.
+    if str(SUPPORT) not in sys.path:
+        sys.path.insert(0, str(SUPPORT))
+    from publish_proxy import resolve_environment_uuid
+    return resolve_environment_uuid(api(f'/orgs/{ORG}/environments'), ENV)
+
+
 def prepare():
     cfg=SUPPORT/'support.env'
     if not cfg.exists():
@@ -221,9 +255,14 @@ def prepare():
     if context != 'k3d-amp-local':
         fail(f'Refusing to deploy to unexpected Kubernetes context {context!r} (expected k3d-amp-local)')
     portal_enabled=read_kv(cfg).get('PORTAL_ENABLED','false')
+    live_uuid=current_amp_environment_uuid()
+    cached_uuid=read_kv(cfg).get('AMP_ENVIRONMENT_UUID','').strip()
+    if cached_uuid and cached_uuid != live_uuid:
+        log('Stale environment UUID detected after Agent Manager reinstall; refreshing from live control plane.')
     update_kv(cfg, {'DEPLOY_TARGET':'kubernetes','KUBE_CONTEXT':context,
                     'K3D_CLUSTER':'amp-local','IMAGE_DELIVERY':'k3d','AMP_PUBLISH':'true',
-                    'AMP_ORG':ORG,'AMP_ENVIRONMENT_HANDLE':ENV,'PORTAL_ENABLED':portal_enabled})
+                    'AMP_ORG':ORG,'AMP_ENVIRONMENT_HANDLE':ENV,
+                    'AMP_ENVIRONMENT_UUID':live_uuid, 'PORTAL_ENABLED':portal_enabled})
     secrets_path=SUPPORT/'secrets.env'
     existing=read_kv(secrets_path)
     required=('SPECIALIST_CALL_KEY','SPECIALIST_EXECUTION_KEY')
@@ -252,7 +291,12 @@ def verify_proxy():
         if upstream!=expected:
             fail('Deployed MCP Proxy upstream does not match the local live HTTPS tunnel. '
                  'Rerun scripts/publish-mcp-secure-tunnel.sh up before deploying agents.')
-    status=[e.get('deploymentStatus') for e in ep.get('environments',[])]
+    expected_env_uuid=current_amp_environment_uuid()
+    assignments=ep.get('environments') or []
+    if len(assignments) != 1 or assignments[0].get('environmentUuid') != expected_env_uuid:
+        fail('MCP Proxy is not assigned to the currently registered Agent Manager environment UUID. '
+             'Rerun ./scripts/start-everything.sh up to reconcile the mapping.')
+    status=[e.get('deploymentStatus') for e in assignments]
     # Endpoint rotations can trigger an asynchronous gateway reconciliation.
     # Wait for the actual deployment state, never equate HTTP PUT 200 with ready.
     if 'Deployed' not in status:
@@ -262,7 +306,10 @@ def verify_proxy():
             fresh_eps=refreshed.get('endpoints') or []
             if len(fresh_eps)!=1:fail('Proxy endpoint count changed during gateway rollout')
             ep=fresh_eps[0]
-            status=[e.get('deploymentStatus') for e in ep.get('environments',[])]
+            refreshed_envs=ep.get('environments') or []
+            if len(refreshed_envs)!=1 or refreshed_envs[0].get('environmentUuid')!=expected_env_uuid:
+                fail('Proxy environment mapping changed during gateway rollout')
+            status=[e.get('deploymentStatus') for e in refreshed_envs]
             current=(((ep.get('upstream') or {}).get('main') or {}).get('url'))
             if current!=upstream:fail('Gateway proxy upstream changed unexpectedly during rollout')
             if 'Deployed' in status:break
@@ -292,66 +339,162 @@ def _project_cli_json(result, command):
 
 
 def _project_inventory():
-    """Read the exact org-scoped project names; require complete inventory."""
+    """Check complete org-scoped project inventory; never infer absence from a partial page.
+
+    AMP v1.0.0 can incorrectly return HTTP 500/INTERNAL_ERROR for a missing
+    project's detail GET. Its authenticated list endpoint reports `total`,
+    `offset`, and `projects`, which together can prove an exact name is absent.
+    """
     p=cmd(['amctl','project','list','--org',ORG,'--json'],optional=True)
-    payload=_project_cli_json(p,'amctl project list')
+    if p.returncode:
+        fail(f'Cannot inspect amctl project list (exit {p.returncode}); project creation blocked')
+    try:
+        envelope=json.loads(p.stdout)
+    except (TypeError, ValueError):
+        fail('amctl project list returned non-JSON; refusing project mutation')
+    if not isinstance(envelope,dict) or envelope.get('status') not in (None,'ok'):
+        fail('amctl project list returned an invalid/error envelope')
+    if envelope.get('org',ORG)!=ORG:
+        fail(f'amctl project list returned a different organization; expected {ORG}')
+    payload=envelope.get('data',envelope)
     if not isinstance(payload,dict) or not isinstance(payload.get('projects'),list):
-        fail('Project list lacks data.projects[]; cannot safely infer project absence')
+        fail('Project list lacks data.projects[]; cannot establish inventory')
     projects=payload['projects']
     if any(not isinstance(x,dict) or not isinstance(x.get('name'),str) or not x['name']
            for x in projects):
-        fail('Project list contains malformed records; refusing project mutations')
-    names=[x['name'] for x in projects]
-    if names.count(PROJECT)>1:
-        fail(f'Multiple project records named {PROJECT!r}; refusing selection')
-    if PROJECT in names:
-        return True
-    # A partial page cannot prove a project's absence. CLI v1 returns total
-    # alongside projects; absence of total also requires a direct 404 check.
+        fail('Project list contains malformed project names')
+    names=[p['name'] for p in projects]
+    if len(names)!=len(set(names)):
+        fail('Project list contains duplicate project names')
     total=payload.get('total')
-    pagination=payload.get('pagination')
-    if total is None and isinstance(pagination,dict):
-        total=pagination.get('total')
-    if total is not None:
-        if type(total) is not int or total < 0 or total < len(projects):
-            fail('Project list total is malformed; refusing project creation')
-        if total != len(projects):
-            fail(f'Project list is paginated ({len(projects)}/{total}); '
-                 'refusing to infer absence from a partial page')
-    elif len(projects)>=50:
-        fail('Project list has no total and may be truncated; refusing creation')
+    if total is None and isinstance(payload.get('pagination'),dict):
+        total=payload['pagination'].get('total')
+    offset=payload.get('offset',0)
+    if isinstance(payload.get('pagination'),dict):
+        offset=payload['pagination'].get('offset',offset)
+    if type(total) is not int or total<0 or type(offset) is not int or offset!=0:
+        fail('Project inventory lacks valid total/offset; refusing to infer absence')
+    if total!=len(projects):
+        fail(f'Project inventory incomplete ({len(projects)}/{total}); '
+             'refusing project mutations or unverified reuse')
+    return PROJECT in names
+
+
+def _project_error_response(result):
+    """Return stable amctl error code and safe status hints, never raw CLI output.
+
+    amctl v1.0 uses exit 1 for multiple kinds of failures. Only explicit
+    not-found responses can establish absence. Authentication and network
+    failures are not proof that creating a project is safe.
+    """
+    parts = [result.stdout or '', result.stderr or '']
+    code = ''
+    message = ''
+    for part in parts:
+        try:
+            payload = json.loads(part.strip())
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        error = payload.get('error')
+        if isinstance(error, dict):
+            code = str(error.get('code') or '')
+            message = str(error.get('message') or '')
+            break
+        if payload.get('status') == 'error' or payload.get('code'):
+            code = str(payload.get('code') or '')
+            message = str(payload.get('message') or payload.get('reason') or '')
+            break
+    if not message:
+        # CLI output can be plain text instead of JSON. We only extract stable
+        # error classes; this text must never be printed as it could be verbose.
+        message = '\n'.join(parts)
+    return code, message
+
+
+def _explicit_project_not_found(result):
+    code, message = _project_error_response(result)
+    normalized = re.sub(r'[^A-Z0-9]+', '_', code.upper()).strip('_')
+    if normalized in ('NOT_FOUND', 'PROJECT_NOT_FOUND', 'RESOURCE_NOT_FOUND',
+                      'HTTP_404', '404'):
+        return True
+    # Require an unmistakable HTTP status or a project-specific not-found.
+    if re.search(r'(?i)\b(?:HTTP(?:/\S+)?\s*|status(?:\s+code)?\s*[=:]?\s*)404\b', message):
+        return True
+    if re.search(r'(?i)\bproject\b.{0,160}\b(?:not[ _-]?found|does not exist)\b', message):
+        return True
     return False
 
 
-def _project_detail_exists():
-    """Return False only for explicit not-found, not for conflicts/permissions."""
-    p=cmd(['amctl','project','get',PROJECT,'--org',ORG,'--json'],optional=True)
-    if p.returncode:
-        output=(p.stderr or '')+'\n'+(p.stdout or '')
-        if re.search(r'(?i)(\b404\b|\bnot[ _-]?found\b|\bdoes not exist\b)',output):
-            return False
-        # Authentication, authorization, 409 and network failures cannot
-        # authorize a project create. Do not print untrusted CLI body.
-        is_conflict = bool(re.search(r'(?i)(\b409\b|\bconflict\b)', output))
-        fail(f'amctl project get failed (exit {p.returncode}, '
-             f'conflict={is_conflict}); '
-             'refusing project creation; inspect project list and CLI context')
-    payload=_project_cli_json(p,'amctl project get')
-    if isinstance(payload,dict) and isinstance(payload.get('project'),dict):
-        payload=payload['project']
-    if not isinstance(payload,dict) or payload.get('name')!=PROJECT:
-        fail('amctl project get did not confirm the requested project identity')
+def _known_project_payload(payload):
+    """Validate a project GET against the exact requested slug and org."""
+    if not isinstance(payload, dict):
+        fail('Project detail returned a non-object; refusing project mutation')
+    if payload.get('status') == 'error' or payload.get('code') in ('ERROR', 'BAD_REQUEST'):
+        fail('Project detail returned an error object; refusing project mutation')
+    payload = payload.get('data', payload)
+    if isinstance(payload, dict) and isinstance(payload.get('project'), dict):
+        payload = payload['project']
+    if not isinstance(payload, dict) or payload.get('name') != PROJECT:
+        fail(f'Project detail did not confirm exact name {PROJECT!r}; refusing creation')
     return True
 
 
-def ensure_project():
-    """Reuse existing projects; create only after independently proven absence.
+def _project_detail_exists():
+    """Use two independent read paths; create only after explicit 404.
 
-    A failed `amctl project get` is not proof of absence: the old routine
-    accidentally sent create on 409, 403, expired sessions and backend errors.
+    Some v1.0.0 amctl project get errors are not classified by shell exit code.
+    The documented low-level `amctl api` command is an authenticated GET of
+    the exact org/project path and provides a useful independent result.
     """
-    if _project_inventory() or _project_detail_exists():
-        log(f'Project exists: {PROJECT} (verified; no create requested)')
+    p=cmd(['amctl','project','get',PROJECT,'--org',ORG,'--json'],optional=True)
+    if p.returncode == 0:
+        payload=_project_cli_json(p,'amctl project get')
+        return _known_project_payload(payload)
+    if _explicit_project_not_found(p):
+        log('Project detail explicitly returned not-found; checking direct API before creation.')
+    else:
+        code, _ = _project_error_response(p)
+        log(f'amctl project get failed (exit {p.returncode}, code={code or "unclassified"}); '
+            'verifying exact project through authenticated API.')
+    path=f'/orgs/{ORG}/projects/{PROJECT}'
+    result=cmd(['amctl','api',path],optional=True)
+    if result.returncode:
+        if _explicit_project_not_found(result):
+            log(f'Exact project API confirms {PROJECT!r} does not exist.')
+            return False
+        code, message=_project_error_response(result)
+        status_hint='permission/authentication' if re.search(
+            r'(?i)\b(401|403|unauthorized|forbidden|token|permission)\b', code+' '+message
+        ) else 'server/transport or unknown'
+        fail(f'Project lookup could not establish existence: amctl project get exit {p.returncode}; '
+             f'direct API exit {result.returncode}, code={code or "unclassified"} '
+             f'({status_hint}). Refusing project creation. '
+             f'Run: amctl project list --org {ORG} --json and '
+             f'amctl api {path}')
+    try:
+        value=json.loads(result.stdout)
+    except (TypeError, ValueError):
+        fail('Project direct API returned non-JSON; refusing project creation')
+    return _known_project_payload(value)
+
+
+def ensure_project():
+    """Safely create/reuse project from two independently fetched complete lists.
+
+    Do NOT require a GET on a non-existent project: AMP v1.0.0 incorrectly
+    returns HTTP 500/INTERNAL_ERROR for that case. A successful and complete
+    authenticated org-scoped project listing is authoritative; double-check
+    absence immediately before creation to narrow the reconciliation race.
+    """
+    if _project_inventory():
+        log(f'Project exists: {PROJECT} (verified by complete inventory)')
+        return
+    log(f'{PROJECT}: absent from complete organization project inventory; '
+        'rechecking before creation.')
+    if _project_inventory():
+        log(f'Project exists: {PROJECT} (appeared during recheck; no create needed)')
         return
     args=['amctl','project','create',PROJECT,'--org',ORG,
           '--display-name','Banco Aurora Banking Agents',
@@ -362,25 +505,23 @@ def ensure_project():
         if not re.search(r'(?i)(\b409\b|\bconflict\b)',detail):
             fail(f'Project create failed (exit {p.returncode}); '
                  'no retry or second creation attempted')
-        # Only accept concurrent creation if an exact org-scoped GET now
-        # establishes the existing project. Never treat an arbitrary 409 as OK.
-        if not (_project_inventory() or _project_detail_exists()):
-            fail('Project create returned 409, but project was not verified; '
-                 'no second create requested')
+        # Creation raced another writer. Only accept when the exact project is
+        # now present in a complete authenticated org inventory.
+        if not _project_inventory():
+            fail('Project creation returned 409, but inventory does not confirm '
+                 'the exact project; no second create requested')
         log(f'Project exists: {PROJECT} (concurrent creation verified)')
         return
-    # The platform may acknowledge create before its read API is consistent.
-    for attempt in range(5):
+    # Successful create may become visible asynchronously. Do not call GET on
+    # an absent object or send a second create while waiting for list updates.
+    for attempt in range(10):
         if _project_inventory():
-            log(f'Created project {PROJECT} (verified)')
+            log(f'Created project {PROJECT} (verified by complete inventory)')
             return
-        if attempt<4:
-            time.sleep(1)
-    if _project_detail_exists():
-        log(f'Created project {PROJECT} (verified by direct read)')
-        return
-    fail(f'Project creation was accepted but {PROJECT!r} was not visible; '
-         'do not rerun a create until status is confirmed')
+        if attempt<9:
+            time.sleep(2)
+    fail(f'Project creation returned success but {PROJECT!r} did not appear in '
+         'a complete project inventory; no duplicate creation attempted')
 
 
 def agent_config(role, creds):

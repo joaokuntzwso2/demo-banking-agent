@@ -255,11 +255,15 @@ start_tunnel_fresh(){
   need kubectl;need cloudflared;need python3;need curl;need amctl
   local i ready=0
   # SIGTERM is asynchronous. Give owned listeners a bounded chance to exit.
-  for ((i=0;i<30;i++)); do
+  for ((i=0;i<60;i++)); do
     if port_available 18101 && port_available 18102; then ready=1; break; fi
     sleep 0.25
   done
-  (( ready == 1 )) || fail 'Port 18101/18102 still occupied after cleanup. Another process may own the port; refusing to kill it.'
+  if (( ready != 1 )); then
+    echo 'Local listeners still block Aurora ports; nothing will be killed without verified ownership.' >&2
+    lsof -nP -iTCP:18101 -iTCP:18102 -sTCP:LISTEN >&2 || true
+    fail 'Port 18101/18102 still occupied after bounded cleanup; investigate the displayed owner.'
+  fi
   ensure_key
   echo 'Checking healthy MCP deployment (no redeploy/restart)...'
   kubectl --context "$KUBE_CONTEXT" -n "$KUBE_NAMESPACE" rollout status deployment/aurora-mcp --timeout=30s

@@ -82,10 +82,24 @@ start_colima() {
       --network-address --cpu "$AMP_COLIMA_CPU" --memory "$AMP_COLIMA_MEMORY" --disk "$AMP_COLIMA_DISK"
   fi
   choose_docker
+  # Existing profiles are never silently resized. On an underprovisioned VM,
+  # fail with a clear path to an explicitly destructive fresh reset.
+  local row cpu mem disk
+  row="$(colima list | awk -v p="$AMP_COLIMA_PROFILE" 'NR>1 && $1==p {print $4, $5, $6}')"
+  read -r cpu mem disk <<< "$row"
+  [[ "$cpu" =~ ^[0-9]+$ && "$mem" =~ ^[0-9]+GiB$ && "$disk" =~ ^[0-9]+GiB$ ]] \
+    || die 'Unable to verify Colima CPU/RAM/disk from colima list.'
+  if (( cpu < AMP_COLIMA_CPU || ${mem%GiB} < AMP_COLIMA_MEMORY || ${disk%GiB} < AMP_COLIMA_DISK )); then
+    die "Colima profile is undersized ($cpu CPU, $mem RAM, $disk disk); expected at least $AMP_COLIMA_CPU/$AMP_COLIMA_MEMORY/$AMP_COLIMA_DISK. Use explicit fresh --yes only if data loss is acceptable."
+  fi
 }
 
 cluster_exists() {
-  k3d cluster list 2>/dev/null | awk -v c="$AMP_K3D_CLUSTER" 'NR>1 && $1 == c {found=1} END {exit(!found)}'
+  # An inventory failure is not proof that a cluster is absent. Never run the
+  # installer against an unknown Docker/k3d state.
+  local inventory
+  inventory="$(k3d cluster list)" || die 'Cannot list k3d clusters; refusing to assume absence.'
+  awk -v c="$AMP_K3D_CLUSTER" 'NR>1 && $1 == c {found=1} END {exit(!found)}' <<< "$inventory"
 }
 
 merge_kubeconfig() {
@@ -101,7 +115,10 @@ merge_kubeconfig() {
 }
 
 kube_ok() {
-  kubectl --context "k3d-${AMP_K3D_CLUSTER}" --request-timeout=15s get nodes >/dev/null 2>&1
+  local result
+  kubectl --context "k3d-${AMP_K3D_CLUSTER}" --request-timeout=15s get nodes >/dev/null 2>&1 || return 1
+  result="$(kubectl --context "k3d-${AMP_K3D_CLUSTER}" --request-timeout=15s get --raw=/readyz 2>/dev/null)" || return 1
+  [[ "$result" == 'ok' ]]
 }
 
 kube_fail_diagnostics() {
@@ -119,7 +136,11 @@ wait_kubernetes() {
     if kube_ok; then
       kubectl --context "k3d-${AMP_K3D_CLUSTER}" wait --for=condition=Ready node --all --timeout=180s \
         || die 'Kubernetes nodes exist but have not become Ready; inspect kubectl describe nodes.'
-      return 0
+      # Require repeated healthy API checks: a brief ready window before K3s
+      # crashes must not be mistaken for a stable control plane.
+      if kube_ok && sleep 2 && kube_ok && sleep 2 && kube_ok; then
+        return 0
+      fi
     fi
     sleep 3
   done
