@@ -18,11 +18,13 @@ class Tests(unittest.TestCase):
                 m.verify_proxy()
     def test_reject_incomplete_scopes(self):
         p={'id':'aurora-banking','endpoints':[{'upstream':{'main':{'url':'https://demo.example/mcp','auth':{'header':'X-Aurora-Origin-Key'}}},'environments':[{'deploymentStatus':'Deployed'}], 'capabilities':{'tools':[{'name':f't{i}'} for i in range(15)]}}]}
+        env_uuid = '01234567-89ab-4cde-8f01-23456789abcd'
+        p['endpoints'][0]['environments'][0]['environmentUuid'] = env_uuid
         # The production repo may contain an active, real Quick Tunnel URL.
         # Isolate SUPPORT so a unit-test fixture is never compared with it.
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(m, 'SUPPORT', pathlib.Path(tmp)):
-                with mock.patch.object(m,'api',side_effect=[p,{'scopes':[]}]):
+                with mock.patch.object(m,'api',side_effect=[p,{'scopes':[]}]), mock.patch.object(m,'current_amp_environment_uuid',return_value=env_uuid):
                     with self.assertRaisesRegex(RuntimeError,'15 MCP tools and scopes'):
                         m.verify_proxy()
 
