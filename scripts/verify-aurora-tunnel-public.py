@@ -56,6 +56,120 @@ def http_probe(url):
         return 0, {}
 
 
+def _curl_probe_https(url, *, dns_over_https=False):
+    """Probe without credentials or disabled TLS checks, honoring the host proxy.
+
+    Curl matches the publisher's transport, including its Cloudflare DoH fallback.
+    Only diagnostic Aurora headers are returned; intermediary headers are ignored.
+    """
+    import re
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix='aurora-https-probe-') as tmp:
+        headers_file = pathlib.Path(tmp) / 'headers'
+        command = [
+            'curl', '--silent', '--show-error',
+            '--output', '/dev/null', '--dump-header', str(headers_file),
+            '--write-out', '%{http_code}',
+            '--connect-timeout', '7', '--max-time', '12',
+        ]
+        if dns_over_https:
+            command += ['--doh-url', 'https://1.1.1.1/dns-query']
+        command.append(url)
+        try:
+            result = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=17, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise TunnelError('Public HTTPS curl transport unavailable') from exc
+        if result.returncode != 0:
+            raise TunnelError(
+                'Public HTTPS curl probe failed (exit {})'.format(result.returncode)
+            )
+        status = result.stdout.strip()
+        if not re.fullmatch(r'[0-9]{3}', status):
+            raise TunnelError('Public HTTPS curl did not return an HTTP status')
+        try:
+            raw = headers_file.read_text(errors='replace').replace('\r\n', '\n')
+        except OSError as exc:
+            raise TunnelError('Public HTTPS headers unavailable') from exc
+
+        # Proxies may prepend an HTTP CONNECT response. Use the LAST HTTP block.
+        blocks = [
+            part for part in raw.split('\n\n')
+            if part.lstrip().startswith('HTTP/')
+        ]
+        if not blocks:
+            raise TunnelError('Public HTTPS response headers were missing')
+        values = {}
+        for line in blocks[-1].splitlines()[1:]:
+            if ':' in line:
+                key, value = line.split(':', 1)
+                values[key.strip()] = value.strip()
+        return int(status), marked_headers(values)
+
+
+def stable_public_probe(url, expected_marker):
+    """Keep a freshly created hostname while DNS/edge routing settles.
+
+    Never accept arbitrary 401s: a matching local-origin marker is mandatory.
+    An exhausted retry budget is an error (fail closed), not implicit success.
+    """
+    import time
+
+    raw_wait = os.environ.get('AURORA_PUBLIC_VERIFY_WAIT_SECONDS', '300')
+    try:
+        wait_seconds = int(raw_wait)
+    except ValueError as exc:
+        raise TunnelError('AURORA_PUBLIC_VERIFY_WAIT_SECONDS must be 0..600') from exc
+    if not 0 <= wait_seconds <= 600:
+        raise TunnelError('AURORA_PUBLIC_VERIFY_WAIT_SECONDS must be 0..600')
+
+    deadline = time.monotonic() + wait_seconds
+    attempt = 0
+    while True:
+        attempt += 1
+        for method in ('urllib', 'curl', 'doh'):
+            try:
+                if method == 'urllib':
+                    status, marker = http_probe(url)
+                else:
+                    status, marker = _curl_probe_https(
+                        url, dns_over_https=(method == 'doh')
+                    )
+                if status == 401 and marker == expected_marker:
+                    if attempt > 1 or method != 'urllib':
+                        print(
+                            'MCP public origin verified (attempt {}, transport {}).'.format(
+                                attempt, method
+                            ), file=sys.stderr,
+                        )
+                    return status, marker
+            except (TunnelError, OSError, TimeoutError, urllib.error.URLError):
+                # A transient DNS, transport, or Cloudflare edge error; no
+                # unverified response is ever treated as successful.
+                pass
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if attempt == 1 or attempt % 6 == 0:
+            print(
+                'MCP public HTTPS not yet verified; preserving tunnel hostname '
+                '(attempt {}, up to {}s total).'.format(attempt, wait_seconds),
+                file=sys.stderr,
+            )
+        time.sleep(min(5, remaining))
+
+    raise TunnelError(
+        'Public HTTPS does not deliver the same authenticated origin 401 marker '
+        '(after {}s stabilization; refusing unverified endpoint)'.format(wait_seconds)
+    )
+
+
+
 def check():
     if not STATE.is_file():
         raise TunnelError('No recorded HTTPS origin; cold-start tunnel reconciliation required')
@@ -63,7 +177,7 @@ def check():
     local_status, local_marker = http_probe(LOCAL)
     if local_status != 401 or not local_marker:
         raise TunnelError('Private origin bridge did not return its authenticated 401 marker')
-    public_status, public_marker = http_probe(public)
+    public_status, public_marker = stable_public_probe(public, local_marker)
     if public_status != 401 or public_marker != local_marker:
         raise TunnelError('Public HTTPS does not deliver the same authenticated origin 401 marker')
     print('MCP_TUNNEL_PUBLIC=verified; HTTPS reaches the authenticated Aurora origin bridge.')
