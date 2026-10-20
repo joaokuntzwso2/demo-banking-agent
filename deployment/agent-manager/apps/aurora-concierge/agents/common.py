@@ -82,12 +82,33 @@ async def mcp_tool(name,arguments):
     # MCP Python SDK 1.25+ accepts a preconfigured httpx.AsyncClient here.
     # Do not pass headers= or timeout= to streamable_http_client(): those
     # arguments were removed from this function (the SDK still yields 3 items).
+    # Keep the injected public MCP URL as the OAuth resource identifier.
+    # Only the verified internal WSO2 Gateway may be used for transport.
+    transport = os.getenv('MCP_TRANSPORT_URL', '').strip() or MCP_URL
+    if transport != MCP_URL:
+        approved_resource = (
+            'https://gateway.amp.184.194.251.162.sslip.io'
+            '/aurora-banking/mcp'
+        )
+        approved_transport = (
+            'http://api-platform-default-default-gw-gateway-'
+            'gateway-runtime.default-default:22893/aurora-banking/mcp'
+        )
+        if not (
+            os.getenv('WSO2_MODE', '').lower() == 'true'
+            and os.getenv('MCP_AUTH_MODE', '').lower() == 'agentid'
+            and MCP_URL == approved_resource
+            and transport == approved_transport
+        ):
+            raise RuntimeError('Unapproved internal MCP transport')
     headers = {**await _mcp_headers(), **outbound_headers()}
+    if transport != MCP_URL:
+        headers['Host'] = 'gateway.amp.184.194.251.162.sslip.io'
     timeout = httpx.Timeout(30.0, read=300.0)
     with business_span('aurora.mcp.tool', **{'aurora.agent.role':role or 'unknown',
                                             'mcp.tool.name':name, 'gen_ai.operation.name':'execute_tool'}):
         async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
-            async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
+            async with streamable_http_client(transport, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     response = await session.call_tool(name, arguments)
