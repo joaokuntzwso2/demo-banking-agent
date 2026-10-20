@@ -1298,9 +1298,10 @@ def build_agent(name, sha, force=False):
     previous_build_name = (found or {}).get('buildId') or (found or {}).get('buildName') or (found or {}).get('name') or (found or {}).get('uuid')
     log(f'{name}: requesting managed build at Git {sha[:12]} (command timeout: 180s).')
     try:
-        # Use the configured Git branch's latest commit. Avoid a direct remote
-        # fetch by commit ID, which is not guaranteed to be accepted by Git.
-        cmd(['amctl','agent','build','create',name,'--project',PROJECT,'--org',ORG],
+        # Pin the verified, published Git revision explicitly.
+        # Never build an unverified moving branch tip.
+        cmd(['amctl','agent','build','create',name,'--commit',sha,
+             '--project',PROJECT,'--org',ORG],
             timeout=180)
     except RuntimeError as exc:
         if not build_in_progress_conflict(exc):
