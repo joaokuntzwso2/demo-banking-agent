@@ -40,6 +40,10 @@ if BUILD_LOCK_RETRY_DELAY < 0 or BUILD_LOCK_RETRY_DELAY > 30:
 if BUILD_DISCOVERY_TIMEOUT < 0 or BUILD_DISCOVERY_INTERVAL <= 0:
     raise ValueError('Invalid AURORA_BUILD_DISCOVERY_TIMEOUT/INTERVAL')
 CORE_SERVICE_URL = 'http://aurora-core.aurora-demo.svc.cluster.local:8100'
+MCP_INTERNAL_TRANSPORT_URL = (
+    'http://api-platform-default-default-gw-gateway-'
+    'gateway-runtime.default-default:22893/aurora-banking/mcp'
+)
 ROLES = ('account', 'card', 'dispute', 'pix', 'wellness')
 AGENTS = ROLES + ('concierge',)
 
@@ -2107,7 +2111,8 @@ def managed_agents():
         reconcile_with_build_lock(
             name,sha,'deployment',
             operation=lambda name=name: deploy_agent(
-                name,{'USE_LLM_PROVIDER':'true','REQUIRE_GOVERNED_LLM':'true'}))
+                name,{'USE_LLM_PROVIDER':'true','REQUIRE_GOVERNED_LLM':'true',
+                       'MCP_TRANSPORT_URL':MCP_INTERNAL_TRANSPORT_URL}))
         provision_gateway_key(name)
     ensure_identity_roles()
     # Keys issued during specialist creation were not in the original snapshot.

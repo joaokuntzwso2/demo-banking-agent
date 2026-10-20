@@ -56,9 +56,20 @@ def invoke_url(payload, agent, env=ENV, *, require_active=True):
                 f'{agent}: invalid gateway URL structure')
         # Fixed local k3d gateway identity confirmed from the customer's
         # live Agent Manager response. No invented routes or arbitrary hosts.
-        require(parsed.hostname == 'default-default.am-gateway.localhost' and
-                parsed.port == 19080 and parsed.scheme == 'http',
-                f'{agent}: unexpected local gateway origin; inspect deployment metadata')
+        local_origin = (
+            parsed.hostname == 'default-default.am-gateway.localhost'
+            and parsed.port == 19080
+            and parsed.scheme == 'http'
+        )
+        aws_origin = (
+            parsed.hostname == 'default-default.agents.184.194.251.162.sslip.io'
+            and parsed.scheme == 'https'
+            and parsed.port in (None, 443)
+        )
+        require(
+            local_origin or aws_origin,
+            f'{agent}: unexpected gateway origin; inspect deployment metadata'
+        )
         candidates.append(raw.rstrip('/'))
     require(len(candidates) == 1,
             f'{agent}: expected exactly one external gateway endpoint; got {len(candidates)}')

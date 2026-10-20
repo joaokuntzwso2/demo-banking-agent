@@ -1,0 +1,56 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "aurora-agents-to-banking-core",
+    "namespace": "dp-default-banco-aurora-default-990774f5"
+  },
+  "spec": {
+    "podSelector": {
+      "matchLabels": {
+        "openchoreo.dev/project": "banco-aurora"
+      },
+      "matchExpressions": [
+        {
+          "key": "openchoreo.dev/component",
+          "operator": "In",
+          "values": [
+            "aurora-account",
+            "aurora-card",
+            "aurora-dispute",
+            "aurora-pix",
+            "aurora-wellness",
+            "aurora-concierge"
+          ]
+        }
+      ]
+    },
+    "policyTypes": [
+      "Egress"
+    ],
+    "egress": [
+      {
+        "to": [
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "aurora-demo"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "app": "aurora-core"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "protocol": "TCP",
+            "port": 8100
+          }
+        ]
+      }
+    ]
+  }
+}

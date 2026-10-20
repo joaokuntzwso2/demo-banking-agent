@@ -40,7 +40,8 @@ spec:
         - name: DEMO_SESSION_SIGNING_KEY
           valueFrom: {secretKeyRef: {name: aurora-support-secrets, key: DEMO_SESSION_SIGNING_KEY}}
         # Access via kubectl port-forward to localhost HTTP. For HTTPS ingress change to true.
-        - {name: DEMO_SECURE_COOKIE, value: 'false'}
+        - {name: DEMO_SECURE_COOKIE, value: 'true'}
+        - {name: DEMO_PUBLIC_ORIGIN, value: 'https://demo.amp.184.194.251.162.sslip.io'}
         readinessProbe: {httpGet: {path: /, port: 8300}, initialDelaySeconds: 5, periodSeconds: 5}
         resources:
           requests: {cpu: 100m, memory: 128Mi}
