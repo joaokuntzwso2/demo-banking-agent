@@ -128,7 +128,7 @@ def is_privacy_attack(message):
     external=('other customer','another customer','someone else',"other person",'otro cliente','otra persona',
               'todas las cuentas','all customers','other accounts')
     return any(x in t for x in external) and any(x in t for x in
-             ('show','reveal','give me','access','display','dame','muestra','mostrar','enséñame','ver'))
+             ('show','reveal','give me','access','display','dame','muestra','muéstrame','muestrame','mostrar','enséñame','ver'))
 
 async def plan(message):
     if is_smalltalk(message):return []

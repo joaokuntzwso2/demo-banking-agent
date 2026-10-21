@@ -30,8 +30,16 @@ def action_intent(message, action):
     if NEGATED_COMMAND[action].search(text):return Intent(None,'negated')
     if action=='open_dispute' and asks_dispute_status(text):
         return Intent(None,'existing_dispute_read_only')
-    if INFO.search(text) and not re.search(r'\b(and|then|also|adem[aá]s|y luego)\b',text,re.I):return Intent(None,'informational')
-    if COMMANDS[action].search(text):return Intent(action,'explicit_positive_command')
+    info=INFO.search(text)
+    command=COMMANDS[action].search(text)
+    # Ignore only the *declarative* "Dicen que es ..." after an explicit command.
+    reported_urgency=(info is not None and command is not None and
+                      info.group(0).casefold()=='que es' and
+                      command.start()<info.start() and
+                      re.search(r'[.!]\s*dicen\s+$',text[:info.start()],re.I))
+    if info and not reported_urgency and not re.search(r'\b(and|then|also|adem[aá]s|y luego)\b',text,re.I):
+        return Intent(None,'informational')
+    if command:return Intent(action,'explicit_positive_command')
     return Intent(None,'no_explicit_command')
 
 def resolve_card(cards,message):
